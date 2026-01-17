@@ -4,7 +4,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.7%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 
-A powerful email forwarding automation tool for Microsoft Outlook that helps you automatically forward emails from your Sent Items folder based on configurable filters.
+A powerful email forwarding automation tool for Microsoft Outlook that helps you automatically forward emails from your Sent Items folder based on configurable filters. Useful for forwarding sent email to documentation systems where auto-forwarding is not available to the user.
 
 ## Features
 
