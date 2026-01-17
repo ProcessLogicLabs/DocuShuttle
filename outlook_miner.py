@@ -1187,6 +1187,7 @@ current_month = datetime.datetime.now().month
 tk.Label(search_frame, text="Forward To Email Address:", font=("Arial", 10), bg="#F5F5F5", fg="#000000").grid(row=0, column=0, padx=10, pady=10, sticky="e")
 recipient_combobox = ttk.Combobox(search_frame, width=47, font=("Arial", 10))
 recipient_combobox.grid(row=0, column=1, padx=10, pady=10)
+init_db()  # Initialize database before loading email addresses
 recipient_combobox['values'] = load_email_addresses()
 recipient_combobox.bind("<<ComboboxSelected>>", load_config_for_email)
 
