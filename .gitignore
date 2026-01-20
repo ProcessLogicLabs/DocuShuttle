@@ -31,7 +31,7 @@ ENV/
 minerdb.db
 *.log
 forwarded_emails.log
-outlook_miner_startup.log
+docushuttle_startup.log
 
 # PyInstaller
 *.spec.bak
