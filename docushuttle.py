@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.2"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -629,28 +629,28 @@ def delete_config(recipient):
         return False
 
 
-def check_if_forwarded_db(file_number, recipient):
-    """Check if file number was previously forwarded."""
+def check_if_forwarded_db(identifier, recipient):
+    """Check if email was previously forwarded (by file number or EntryID)."""
     try:
         with db_lock:
             with sqlite3.connect('minerdb.db', timeout=10) as conn:
                 c = conn.cursor()
                 c.execute('''SELECT COUNT(*) FROM ForwardedEmails WHERE file_number = ? AND recipient = ?''',
-                          (file_number, recipient.lower()))
+                          (identifier, recipient.lower()))
                 return c.fetchone()[0] > 0
     except Exception:
         return False
 
 
-def log_forwarded_email(file_number, recipient):
-    """Log forwarded email to database."""
+def log_forwarded_email(identifier, recipient):
+    """Log forwarded email to database (by file number or EntryID)."""
     try:
         with db_lock:
             with sqlite3.connect('minerdb.db', timeout=10) as conn:
                 c = conn.cursor()
                 forwarded_at = datetime.datetime.now(pytz.timezone(DEFAULT_TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
                 c.execute('''INSERT OR REPLACE INTO ForwardedEmails (file_number, recipient, forwarded_at)
-                             VALUES (?, ?, ?)''', (file_number, recipient.lower(), forwarded_at))
+                             VALUES (?, ?, ?)''', (identifier, recipient.lower(), forwarded_at))
                 conn.commit()
     except Exception:
         pass
@@ -813,7 +813,10 @@ class OutlookWorker(QThread):
                             if not file_number:
                                 continue
 
-                        if skip_forwarded and file_number and check_if_forwarded_db(file_number, recipient):
+                        # Use file_number if available, otherwise use EntryID for tracking
+                        tracking_id = file_number if file_number else item.EntryID
+
+                        if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
                             continue
 
                         sent_on = item.SentOn
@@ -914,7 +917,10 @@ class OutlookWorker(QThread):
                             if not file_number:
                                 continue
 
-                        if skip_forwarded and file_number and check_if_forwarded_db(file_number, recipient):
+                        # Use file_number if available, otherwise use EntryID for tracking
+                        tracking_id = file_number if file_number else item.EntryID
+
+                        if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
                             continue
 
                         sent_on = item.SentOn
@@ -935,8 +941,8 @@ class OutlookWorker(QThread):
                         self._log(f"Forwarded: {new_subject}")
                         self.signals.display_subject.emit(new_subject)
 
-                        if file_number:
-                            log_forwarded_email(file_number, recipient)
+                        # Log using file_number or EntryID
+                        log_forwarded_email(tracking_id, recipient)
 
                         if delay_seconds > 0:
                             time.sleep(delay_seconds)
@@ -1482,6 +1488,23 @@ class DocuShuttleWindow(QMainWindow):
         """Scan and forward matching emails."""
         if not self.validate_inputs():
             return
+
+        # Prompt user to configure prefix if not set
+        if not self.config_prefix.strip():
+            reply = QMessageBox.question(
+                self, "Configure File Number Prefix?",
+                "No file number prefix is configured.\n\n"
+                "Without a prefix, emails will be tracked by their unique ID, "
+                "and the original subject line will be preserved.\n\n"
+                "Would you like to configure a file number prefix now?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            )
+            if reply == QMessageBox.Yes:
+                self.show_config_dialog()
+                return
+            elif reply == QMessageBox.Cancel:
+                return
+            # If No, continue without prefix
 
         config = self.get_config()
 
