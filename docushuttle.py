@@ -22,7 +22,13 @@ import sqlite3
 import threading
 import re
 import time
+import json
+import subprocess
+import tempfile
+import shutil
 from queue import Queue, Empty
+from urllib.request import urlopen, Request
+from urllib.error import URLError, HTTPError
 
 # PyQt5 imports
 from PyQt5.QtWidgets import (
@@ -54,6 +60,12 @@ else:
 
 ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
+
+# Version and Update Configuration
+APP_VERSION = "1.4.0"
+GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
 
 # Constants
 LOG_BUFFER_SIZE = 10
@@ -297,6 +309,183 @@ QCheckBox::indicator:checked {{
     border-color: {COLORS['primary']};
 }}
 """
+
+
+# ============================================================================
+# AUTO-UPDATE SYSTEM
+# ============================================================================
+class UpdateSignals(QObject):
+    """Signals for update checker thread."""
+    update_available = pyqtSignal(str, str)  # version, download_url
+    update_downloaded = pyqtSignal(str)  # path to downloaded file
+    update_error = pyqtSignal(str)
+    no_update = pyqtSignal()
+
+
+class UpdateChecker(QThread):
+    """Background thread to check for and download updates."""
+
+    def __init__(self, check_only=False):
+        super().__init__()
+        self.signals = UpdateSignals()
+        self.check_only = check_only
+        self.download_url = None
+        self.new_version = None
+
+    def run(self):
+        """Check GitHub for updates and optionally download."""
+        try:
+            # Check for updates
+            request = Request(GITHUB_API_URL)
+            request.add_header('User-Agent', f'DocuShuttle/{APP_VERSION}')
+
+            with urlopen(request, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+
+            latest_version = data.get('tag_name', '').lstrip('v')
+
+            if not latest_version:
+                self.signals.no_update.emit()
+                return
+
+            # Compare versions
+            if self._version_compare(latest_version, APP_VERSION) > 0:
+                # Find the exe asset
+                assets = data.get('assets', [])
+                download_url = None
+
+                for asset in assets:
+                    name = asset.get('name', '').lower()
+                    if name.endswith('.exe') and 'setup' in name:
+                        download_url = asset.get('browser_download_url')
+                        break
+
+                if not download_url:
+                    # Try to find any exe
+                    for asset in assets:
+                        if asset.get('name', '').lower().endswith('.exe'):
+                            download_url = asset.get('browser_download_url')
+                            break
+
+                if download_url:
+                    self.new_version = latest_version
+                    self.download_url = download_url
+                    self.signals.update_available.emit(latest_version, download_url)
+
+                    if not self.check_only:
+                        self._download_update(download_url, latest_version)
+                else:
+                    self.signals.no_update.emit()
+            else:
+                self.signals.no_update.emit()
+
+        except (URLError, HTTPError) as e:
+            self.signals.update_error.emit(f"Network error: {str(e)}")
+        except json.JSONDecodeError:
+            self.signals.update_error.emit("Invalid response from update server")
+        except Exception as e:
+            self.signals.update_error.emit(f"Update check failed: {str(e)}")
+
+    def _version_compare(self, v1, v2):
+        """Compare two version strings. Returns >0 if v1>v2, <0 if v1<v2, 0 if equal."""
+        def normalize(v):
+            return [int(x) for x in re.sub(r'[^0-9.]', '', v).split('.')]
+
+        v1_parts = normalize(v1)
+        v2_parts = normalize(v2)
+
+        # Pad shorter version with zeros
+        max_len = max(len(v1_parts), len(v2_parts))
+        v1_parts.extend([0] * (max_len - len(v1_parts)))
+        v2_parts.extend([0] * (max_len - len(v2_parts)))
+
+        for i in range(max_len):
+            if v1_parts[i] > v2_parts[i]:
+                return 1
+            elif v1_parts[i] < v2_parts[i]:
+                return -1
+        return 0
+
+    def _download_update(self, url, version):
+        """Download the update installer."""
+        try:
+            # Create updates directory in user's app data
+            update_dir = os.path.join(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()),
+                                       'DocuShuttle', 'updates')
+            os.makedirs(update_dir, exist_ok=True)
+
+            # Download file
+            filename = f"DocuShuttle_Setup_v{version}.exe"
+            filepath = os.path.join(update_dir, filename)
+
+            request = Request(url)
+            request.add_header('User-Agent', f'DocuShuttle/{APP_VERSION}')
+
+            with urlopen(request, timeout=60) as response:
+                with open(filepath, 'wb') as f:
+                    shutil.copyfileobj(response, f)
+
+            self.signals.update_downloaded.emit(filepath)
+
+        except Exception as e:
+            self.signals.update_error.emit(f"Download failed: {str(e)}")
+
+
+def get_last_update_check():
+    """Get timestamp of last update check from settings file."""
+    settings_path = os.path.join(os.environ.get('LOCALAPPDATA', '.'),
+                                  'DocuShuttle', 'settings.json')
+    try:
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r') as f:
+                settings = json.load(f)
+                return settings.get('last_update_check', 0)
+    except:
+        pass
+    return 0
+
+
+def save_last_update_check():
+    """Save timestamp of update check to settings file."""
+    settings_dir = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle')
+    settings_path = os.path.join(settings_dir, 'settings.json')
+
+    try:
+        os.makedirs(settings_dir, exist_ok=True)
+        settings = {}
+
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r') as f:
+                settings = json.load(f)
+
+        settings['last_update_check'] = time.time()
+
+        with open(settings_path, 'w') as f:
+            json.dump(settings, f)
+    except:
+        pass
+
+
+def get_pending_update():
+    """Check if there's a downloaded update waiting to be installed."""
+    update_dir = os.path.join(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()),
+                               'DocuShuttle', 'updates')
+    if os.path.exists(update_dir):
+        for filename in os.listdir(update_dir):
+            if filename.endswith('.exe') and 'Setup' in filename:
+                return os.path.join(update_dir, filename)
+    return None
+
+
+def clear_pending_updates():
+    """Remove any pending update files."""
+    update_dir = os.path.join(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()),
+                               'DocuShuttle', 'updates')
+    if os.path.exists(update_dir):
+        try:
+            shutil.rmtree(update_dir)
+        except:
+            pass
 
 
 # ============================================================================
@@ -861,9 +1050,12 @@ class DocuShuttleWindow(QMainWindow):
         self.config_delay = "0"
         self.config_require_attachments = True
         self.config_skip_forwarded = True
+        self.update_checker = None
+        self.pending_update_path = None
 
         self.init_ui()
         self.load_saved_state()
+        self.check_for_updates_on_startup()
 
     def init_ui(self):
         """Initialize the user interface."""
@@ -959,6 +1151,14 @@ class DocuShuttleWindow(QMainWindow):
 
         config_action = config_menu.addAction("Configuration...")
         config_action.triggered.connect(self.show_config_dialog)
+
+        config_menu.addSeparator()
+
+        check_update_action = config_menu.addAction("Check for Updates...")
+        check_update_action.triggered.connect(self.manual_check_for_updates)
+
+        about_action = config_menu.addAction(f"About DocuShuttle v{APP_VERSION}")
+        about_action.triggered.connect(self.show_about_dialog)
 
         self.config_menu_btn.setMenu(config_menu)
         header_layout.addWidget(self.config_menu_btn)

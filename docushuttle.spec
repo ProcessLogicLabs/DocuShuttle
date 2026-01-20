@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
-    ['outlook_miner_qt.py'],
+    ['docushuttle.py'],
     pathex=[],
     binaries=[],
     datas=[('myicon.ico', '.'), ('myicon.png', '.')],

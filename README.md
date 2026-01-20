@@ -45,7 +45,7 @@ A powerful email forwarding automation tool for Microsoft Outlook that helps you
 Run the application using Python:
 
 ```bash
-python outlook_miner_qt.py
+python docushuttle.py
 ```
 
 Or use the compiled executable (if available):
@@ -213,7 +213,7 @@ The executable will be created in the `dist` folder.
 
 ```
 docushuttle/
-├── outlook_miner_qt.py    # Main application file (PyQt5)
+├── docushuttle.py         # Main application file (PyQt5)
 ├── docushuttle.spec       # PyInstaller specification
 ├── DocuShuttle_Setup.iss  # Inno Setup installer script
 ├── create_icon.py         # Icon generation script
