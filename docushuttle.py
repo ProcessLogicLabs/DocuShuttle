@@ -1534,6 +1534,143 @@ class DocuShuttleWindow(QMainWindow):
             self.worker.cancel()
             self.log("Cancellation requested...")
 
+    # ========================================================================
+    # AUTO-UPDATE METHODS
+    # ========================================================================
+    def check_for_updates_on_startup(self):
+        """Check for updates silently on startup."""
+        # Check if enough time has passed since last check
+        last_check = get_last_update_check()
+        current_time = time.time()
+
+        if current_time - last_check < UPDATE_CHECK_INTERVAL:
+            # Check if there's a pending update
+            pending = get_pending_update()
+            if pending and os.path.exists(pending):
+                self.prompt_install_update(pending)
+            return
+
+        # Start background update check
+        self.start_update_check(silent=True)
+
+    def manual_check_for_updates(self):
+        """Manually trigger update check from menu."""
+        self.log("Checking for updates...")
+        self.start_update_check(silent=False)
+
+    def start_update_check(self, silent=True):
+        """Start the update checker thread."""
+        if self.update_checker and self.update_checker.isRunning():
+            return
+
+        self.update_checker = UpdateChecker()
+        self.update_checker.signals.update_available.connect(
+            lambda ver, url, notes: self.on_update_available(ver, url, notes, silent))
+        self.update_checker.signals.update_downloaded.connect(self.on_update_downloaded)
+        self.update_checker.signals.update_error.connect(
+            lambda err: self.on_update_error(err, silent))
+        self.update_checker.signals.no_update.connect(
+            lambda: self.on_no_update(silent))
+        self.update_checker.start()
+
+    def on_update_available(self, version, download_url, release_notes, silent):
+        """Handle update available signal."""
+        save_last_update_check()
+
+        if silent:
+            # Silently download the update
+            self.log(f"New version {version} available, downloading...")
+            if self.update_checker:
+                self.update_checker.download_url = download_url
+                self.update_checker.download_update(download_url)
+        else:
+            # Ask user if they want to download
+            reply = QMessageBox.question(
+                self, "Update Available",
+                f"A new version ({version}) is available!\n\n"
+                f"Release notes:\n{release_notes[:500]}...\n\n"
+                f"Would you like to download and install it?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.log(f"Downloading update {version}...")
+                if self.update_checker:
+                    self.update_checker.download_update(download_url)
+
+    def on_update_downloaded(self, file_path):
+        """Handle update downloaded signal."""
+        self.pending_update_path = file_path
+        self.log(f"Update downloaded: {file_path}")
+
+        # Save pending update path
+        config_dir = os.path.dirname(os.path.abspath(__file__))
+        update_file = os.path.join(config_dir, '.pending_update')
+        with open(update_file, 'w') as f:
+            f.write(file_path)
+
+        self.prompt_install_update(file_path)
+
+    def prompt_install_update(self, file_path):
+        """Prompt user to install the downloaded update."""
+        reply = QMessageBox.question(
+            self, "Update Ready",
+            "A new update has been downloaded and is ready to install.\n\n"
+            "The application will close and the installer will run.\n"
+            "Would you like to install it now?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            self.install_update(file_path)
+
+    def install_update(self, file_path):
+        """Launch the installer and close the app."""
+        try:
+            # Launch the installer
+            subprocess.Popen([file_path], shell=True)
+            # Clear pending update
+            clear_pending_updates()
+            # Close the application
+            QApplication.quit()
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Update Error",
+                f"Failed to launch installer:\n{str(e)}"
+            )
+
+    def on_update_error(self, error, silent):
+        """Handle update error signal."""
+        save_last_update_check()
+        if not silent:
+            QMessageBox.warning(
+                self, "Update Check Failed",
+                f"Could not check for updates:\n{error}"
+            )
+        else:
+            self.log(f"Update check failed: {error}")
+
+    def on_no_update(self, silent):
+        """Handle no update available signal."""
+        save_last_update_check()
+        if not silent:
+            QMessageBox.information(
+                self, "No Updates",
+                f"You are running the latest version (v{APP_VERSION})."
+            )
+        else:
+            self.log("No updates available")
+
+    def show_about_dialog(self):
+        """Show about dialog."""
+        QMessageBox.about(
+            self, "About DocuShuttle",
+            f"<h2>DocuShuttle</h2>"
+            f"<p>Version {APP_VERSION}</p>"
+            f"<p>Email forwarding automation for Microsoft Outlook.</p>"
+            f"<p>&copy; 2024 Process Logic Labs</p>"
+            f"<p><a href='https://github.com/ProcessLogicLabs/DocuShuttle'>GitHub Repository</a></p>"
+        )
+
 
 # ============================================================================
 # ANIMATED SPLASH SCREEN
@@ -1787,12 +1924,13 @@ class AnimatedSplashScreen(QSplashScreen):
         painter.setFont(font)
         painter.setPen(QColor(0, 0, 0, 80))
         loading_text = "Loading..." if self.progress < 100 else "Ready!"
+        version_text = f"v{APP_VERSION}"
         painter.drawText(progress_x + 1, progress_y + 23, loading_text)
-        painter.drawText(progress_x + progress_width - 49, progress_y + 23, "v1.3.0")
+        painter.drawText(progress_x + progress_width - 49, progress_y + 23, version_text)
 
         painter.setPen(QColor(COLORS['text_secondary']))
         painter.drawText(progress_x, progress_y + 22, loading_text)
-        painter.drawText(progress_x + progress_width - 50, progress_y + 22, "v1.3.0")
+        painter.drawText(progress_x + progress_width - 50, progress_y + 22, version_text)
 
         painter.end()
 
