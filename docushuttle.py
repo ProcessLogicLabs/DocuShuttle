@@ -624,11 +624,14 @@ class OutlookWorker(QThread):
                             if not file_number:
                                 continue
 
-                        if skip_forwarded and file_number and check_if_forwarded_db(file_number, recipient):
-                            continue
-
                         sent_on = item.SentOn
                         if sent_on < start_date or sent_on > end_date:
+                            continue
+
+                        # Use file_number if available, otherwise use EntryID as unique identifier
+                        tracking_id = file_number if file_number else item.EntryID
+
+                        if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
                             continue
 
                         info = f"[{sent_on.strftime('%Y-%m-%d %H:%M:%S')}] {subject}"
@@ -725,14 +728,17 @@ class OutlookWorker(QThread):
                             if not file_number:
                                 continue
 
-                        if skip_forwarded and file_number and check_if_forwarded_db(file_number, recipient):
-                            continue
-
                         sent_on = item.SentOn
                         if sent_on < start_date or sent_on > end_date:
                             continue
 
                         if require_attachments and item.Attachments.Count == 0:
+                            continue
+
+                        # Use file_number if available, otherwise use EntryID as unique identifier
+                        tracking_id = file_number if file_number else item.EntryID
+
+                        if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
                             continue
 
                         new_subject = file_number if file_number else subject
@@ -746,8 +752,7 @@ class OutlookWorker(QThread):
                         self._log(f"Forwarded: {new_subject}")
                         self.signals.display_subject.emit(new_subject)
 
-                        if file_number:
-                            log_forwarded_email(file_number, recipient)
+                        log_forwarded_email(tracking_id, recipient)
 
                         if delay_seconds > 0:
                             time.sleep(delay_seconds)
