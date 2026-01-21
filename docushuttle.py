@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.4.5"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -964,10 +964,10 @@ class OutlookWorker(QThread):
 class ConfigDialog(QDialog):
     """Configuration dialog for advanced settings."""
 
-    def __init__(self, parent=None, prefix="", delay="0", require_attach=True, skip_fwd=True):
+    def __init__(self, parent=None, prefix="", delay="0", require_attach=True, skip_fwd=True, auto_update=False):
         super().__init__(parent)
         self.setWindowTitle("Configuration")
-        self.setFixedSize(400, 280)
+        self.setFixedSize(400, 320)
         self.setStyleSheet(STYLESHEET)
 
         layout = QVBoxLayout(self)
@@ -1013,6 +1013,15 @@ class ConfigDialog(QDialog):
         )
         form.addRow("Skip Previously Forwarded:", self.skip_fwd_check)
 
+        self.auto_update_check = QCheckBox()
+        self.auto_update_check.setChecked(auto_update)
+        self.auto_update_check.setToolTip(
+            "When checked, updates will be downloaded and installed automatically.\n"
+            "The app will close and restart with the new version.\n"
+            "Uncheck to be prompted before installing updates."
+        )
+        form.addRow("Auto-Install Updates:", self.auto_update_check)
+
         layout.addLayout(form)
         layout.addStretch()
 
@@ -1038,7 +1047,8 @@ class ConfigDialog(QDialog):
             'prefix': self.prefix_edit.text(),
             'delay': self.delay_edit.text(),
             'require_attachments': self.require_attach_check.isChecked(),
-            'skip_forwarded': self.skip_fwd_check.isChecked()
+            'skip_forwarded': self.skip_fwd_check.isChecked(),
+            'auto_update': self.auto_update_check.isChecked()
         }
 
 
@@ -1051,10 +1061,11 @@ class DocuShuttleWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.worker = None
-        self.config_prefix = ""
+        self.config_prefix = "76"
         self.config_delay = "0"
         self.config_require_attachments = True
         self.config_skip_forwarded = True
+        self.config_auto_update = False
         self.update_checker = None
         self.pending_update_path = None
 
@@ -1323,6 +1334,11 @@ class DocuShuttleWindow(QMainWindow):
             except Exception:
                 pass
 
+        # Load auto-update setting
+        auto_update = load_setting('auto_update')
+        if auto_update is not None:
+            self.config_auto_update = auto_update
+
     def on_recipient_changed(self, text):
         """Handle recipient selection change."""
         if not text:
@@ -1368,7 +1384,8 @@ class DocuShuttleWindow(QMainWindow):
             self.config_prefix,
             self.config_delay,
             self.config_require_attachments,
-            self.config_skip_forwarded
+            self.config_skip_forwarded,
+            self.config_auto_update
         )
 
         if dialog.exec_() == QDialog.Accepted:
@@ -1377,6 +1394,8 @@ class DocuShuttleWindow(QMainWindow):
             self.config_delay = values['delay']
             self.config_require_attachments = values['require_attachments']
             self.config_skip_forwarded = values['skip_forwarded']
+            self.config_auto_update = values['auto_update']
+            save_setting('auto_update', self.config_auto_update)
             self.log("Configuration updated")
 
     def show_email_context_menu(self, position):
@@ -1629,7 +1648,14 @@ class DocuShuttleWindow(QMainWindow):
         """Handle update downloaded signal."""
         self.pending_update_path = file_path
         self.log(f"Update downloaded: {file_path}")
-        self.prompt_install_update(file_path)
+
+        if self.config_auto_update:
+            # Auto-install without prompting
+            self.log("Auto-installing update...")
+            self.install_update(file_path)
+        else:
+            # Prompt user
+            self.prompt_install_update(file_path)
 
     def prompt_install_update(self, file_path):
         """Prompt user to install the downloaded update."""
@@ -1750,8 +1776,8 @@ class AnimatedSplashScreen(QSplashScreen):
         self.envelopes = []
         for _ in range(12):
             angle = random.uniform(0, 360)
-            distance = random.uniform(50, 120)  # Closer to center, away from edges
-            size = random.uniform(18, 30)
+            distance = random.uniform(30, 80)  # Tighter, within vortex bounds
+            size = random.uniform(15, 25)
             x = self.center_x + distance * math.cos(math.radians(angle))
             y = self.center_y + distance * math.sin(math.radians(angle))
             self.envelopes.append(Envelope(x, y, size, angle, distance))
@@ -1841,14 +1867,14 @@ class AnimatedSplashScreen(QSplashScreen):
         for i in range(4):
             offset_angle = self.vortex_rotation + (i * 90)
 
-            # Create gradient spiral
+            # Create tighter gradient spiral
             path = QPainterPath()
-            start_dist = 15
-            end_dist = 70
+            start_dist = 10
+            end_dist = 55
 
             for j in range(50):
                 t = j / 49
-                angle = offset_angle + t * 360
+                angle = offset_angle + t * 270  # Tighter spiral (less rotation)
                 dist = start_dist + t * (end_dist - start_dist)
                 x = self.center_x + dist * math.cos(math.radians(angle))
                 y = self.center_y + dist * math.sin(math.radians(angle))
@@ -1861,18 +1887,18 @@ class AnimatedSplashScreen(QSplashScreen):
             # Draw with gradient alpha
             pen_color = QColor(COLORS['primary'])
             pen_color.setAlpha(150)
-            painter.setPen(QPen(pen_color, 3))
+            painter.setPen(QPen(pen_color, 2.5))
             painter.drawPath(path)
 
-        # Draw center circle with gradient
-        gradient = QRadialGradient(self.center_x, self.center_y, 25)
+        # Draw smaller center circle with gradient
+        gradient = QRadialGradient(self.center_x, self.center_y, 18)
         gradient.setColorAt(0, QColor(COLORS['primary']))
         gradient.setColorAt(0.7, QColor(COLORS['primary_light']))
         gradient.setColorAt(1, QColor(255, 255, 255, 0))
 
         painter.setBrush(QBrush(gradient))
         painter.setPen(Qt.NoPen)
-        painter.drawEllipse(self.center_x - 25, self.center_y - 25, 50, 50)
+        painter.drawEllipse(self.center_x - 18, self.center_y - 18, 36, 36)
 
     def paintEvent(self, event):
         """Custom paint for the splash screen."""
