@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.4.8"
+APP_VERSION = "1.4.9"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -409,6 +409,7 @@ class UpdateChecker(QThread):
 
     def _download_update(self, url, version):
         """Download the update installer with progress reporting."""
+        filepath = None
         try:
             # Create updates directory in user's app data
             update_dir = os.path.join(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()),
@@ -418,6 +419,13 @@ class UpdateChecker(QThread):
             # Download file
             filename = f"DocuShuttle_Setup_v{version}.exe"
             filepath = os.path.join(update_dir, filename)
+
+            # Remove old file if exists
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
 
             request = Request(url)
             request.add_header('User-Agent', f'DocuShuttle/{APP_VERSION}')
@@ -436,9 +444,22 @@ class UpdateChecker(QThread):
                         downloaded += len(chunk)
                         self.signals.download_progress.emit(downloaded, total_size)
 
-            self.signals.update_downloaded.emit(filepath)
+            # Verify download completed successfully
+            if filepath and os.path.exists(filepath):
+                final_size = os.path.getsize(filepath)
+                if total_size > 0 and final_size != total_size:
+                    raise Exception(f"Download incomplete: expected {total_size} bytes, got {final_size}")
+                self.signals.update_downloaded.emit(filepath)
+            else:
+                raise Exception("Downloaded file not found after download completed")
 
         except Exception as e:
+            # Clean up partial download
+            if filepath and os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
             self.signals.update_error.emit(f"Download failed: {str(e)}")
 
 
@@ -1738,6 +1759,21 @@ class DocuShuttleWindow(QMainWindow):
         self.pending_update_path = file_path
         self.log(f"Update downloaded: {file_path}")
 
+        # Verify file exists and is valid
+        if not os.path.exists(file_path):
+            self.log(f"Error: Downloaded file not found at {file_path}")
+            if self.progress_dialog:
+                self.progress_dialog.close()
+                self.progress_dialog = None
+            QMessageBox.critical(
+                self, "Update Error",
+                f"Downloaded file not found: {file_path}"
+            )
+            return
+
+        file_size = os.path.getsize(file_path)
+        self.log(f"Update file size: {file_size / (1024*1024):.2f} MB")
+
         if self.config_auto_update:
             # Auto-install without prompting
             self.log("Auto-installing update...")
@@ -1768,17 +1804,30 @@ class DocuShuttleWindow(QMainWindow):
     def install_update(self, file_path):
         """Launch the installer and close the app."""
         try:
-            # Launch the installer with silent mode and restart flag
-            # /SILENT runs without user interaction
+            # Launch the installer with very silent mode and restart flag
+            # /VERYSILENT runs without any user interaction (more silent than /SILENT)
             # /RESTARTAPPLICATIONS attempts to close and restart the app after install
-            subprocess.Popen([file_path, '/SILENT', '/RESTARTAPPLICATIONS'], shell=True)
+            # /NORESTART prevents prompting for restart (RestartApplications handles it)
+            process = subprocess.Popen(
+                [file_path, '/VERYSILENT', '/RESTARTAPPLICATIONS', '/NORESTART'],
+                shell=False,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+
+            # Log the process info
+            self.log(f"Installer launched (PID: {process.pid})")
 
             # Clear pending update
             clear_pending_updates()
 
-            # Close the application so installer can proceed
-            QApplication.quit()
+            # Give the installer a moment to start before closing
+            QTimer.singleShot(1000, QApplication.quit)
+
         except Exception as e:
+            self.log(f"Installer launch error: {str(e)}")
+            if self.progress_dialog:
+                self.progress_dialog.close()
+                self.progress_dialog = None
             QMessageBox.critical(
                 self, "Update Error",
                 f"Failed to launch installer:\n{str(e)}"
