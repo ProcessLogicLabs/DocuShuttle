@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.4.6"
+APP_VERSION = "1.4.7"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -1682,11 +1682,15 @@ class DocuShuttleWindow(QMainWindow):
     def install_update(self, file_path):
         """Launch the installer and close the app."""
         try:
-            # Launch the installer
-            subprocess.Popen([file_path], shell=True)
+            # Launch the installer with silent mode and restart flag
+            # /SILENT runs without user interaction
+            # /RESTARTAPPLICATIONS attempts to close and restart the app after install
+            subprocess.Popen([file_path, '/SILENT', '/RESTARTAPPLICATIONS'], shell=True)
+
             # Clear pending update
             clear_pending_updates()
-            # Close the application
+
+            # Close the application so installer can proceed
             QApplication.quit()
         except Exception as e:
             QMessageBox.critical(

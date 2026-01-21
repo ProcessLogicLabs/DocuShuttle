@@ -1,8 +1,8 @@
 ; Inno Setup Script for DocuShuttle
-; Version: 1.4.6
+; Version: 1.4.7
 
 #define MyAppName "DocuShuttle"
-#define MyAppVersion "1.4.6"
+#define MyAppVersion "1.4.7"
 #define MyAppPublisher "Process Logic Labs"
 #define MyAppExeName "DocuShuttle.exe"
 
@@ -23,6 +23,8 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\myicon.ico
+CloseApplications=yes
+RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
