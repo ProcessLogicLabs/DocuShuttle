@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -1717,12 +1717,11 @@ class AnimatedSplashScreen(QSplashScreen):
         self.splash_width = 500
         self.splash_height = 350
         pixmap = QPixmap(self.splash_width, self.splash_height)
-        pixmap.fill(Qt.transparent)
+        pixmap.fill(Qt.white)
         super().__init__(pixmap)
 
-        # Set window flags for transparency
+        # Set window flags
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.SplashScreen)
-        self.setAttribute(Qt.WA_TranslucentBackground)
 
         # Vortex center
         self.center_x = self.splash_width // 2
@@ -1880,21 +1879,12 @@ class AnimatedSplashScreen(QSplashScreen):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Transparent background - no fill
+        # White background (filled in __init__)
 
-        # Draw brand text at top with shadow for visibility
+        # Draw brand text at top
         text_y = 50
         font = QFont('Segoe UI', 24, QFont.Bold)
         painter.setFont(font)
-
-        # Draw text outline/glow for visibility on any background
-        outline_color = QColor(255, 255, 255, 200)
-        for dx in [-2, -1, 0, 1, 2]:
-            for dy in [-2, -1, 0, 1, 2]:
-                if dx != 0 or dy != 0:
-                    painter.setPen(outline_color)
-                    painter.drawText(170 + dx, text_y + dy, "Docu")
-                    painter.drawText(245 + dx, text_y + dy, "Shuttle")
 
         # Draw "Docu" in teal
         painter.setPen(QColor(COLORS['primary']))
@@ -1904,15 +1894,9 @@ class AnimatedSplashScreen(QSplashScreen):
         painter.setPen(QColor(147, 112, 162))  # Muted purple
         painter.drawText(245, text_y, "Shuttle")
 
-        # Draw subtitle with outline for visibility
+        # Draw subtitle
         font = QFont('Segoe UI', 10)
         painter.setFont(font)
-        subtitle_outline = QColor(255, 255, 255, 180)
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx != 0 or dy != 0:
-                    painter.setPen(subtitle_outline)
-                    painter.drawText(155 + dx, text_y + 25 + dy, "Email Forwarding Automation")
         painter.setPen(QColor(80, 80, 80))
         painter.drawText(155, text_y + 25, "Email Forwarding Automation")
 
