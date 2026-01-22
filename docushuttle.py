@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -1804,24 +1804,37 @@ class DocuShuttleWindow(QMainWindow):
     def install_update(self, file_path):
         """Launch the installer and close the app."""
         try:
-            # Launch the installer with very silent mode and restart flag
-            # /VERYSILENT runs without any user interaction (more silent than /SILENT)
-            # /RESTARTAPPLICATIONS attempts to close and restart the app after install
-            # /NORESTART prevents prompting for restart (RestartApplications handles it)
-            process = subprocess.Popen(
-                [file_path, '/VERYSILENT', '/RESTARTAPPLICATIONS', '/NORESTART'],
-                shell=False,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-
-            # Log the process info
-            self.log(f"Installer launched (PID: {process.pid})")
+            # Close progress dialog first
+            if self.progress_dialog:
+                self.progress_dialog.close()
+                self.progress_dialog = None
 
             # Clear pending update
             clear_pending_updates()
 
-            # Give the installer a moment to start before closing
-            QTimer.singleShot(1000, QApplication.quit)
+            # Log the action
+            self.log(f"Launching installer: {file_path}")
+
+            # Launch installer with a batch script to ensure proper timing
+            # This ensures the app closes before the installer tries to replace files
+            batch_script = os.path.join(tempfile.gettempdir(), 'docushuttle_update.bat')
+            with open(batch_script, 'w') as f:
+                f.write('@echo off\n')
+                f.write('timeout /t 2 /nobreak >nul\n')  # Wait 2 seconds for app to close
+                f.write(f'"{file_path}" /VERYSILENT /RESTARTAPPLICATIONS /NORESTART\n')
+                f.write(f'del "%~f0"\n')  # Delete the batch script itself
+
+            # Launch the batch script
+            subprocess.Popen(
+                batch_script,
+                shell=False,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+
+            self.log("Update installer scheduled, closing application...")
+
+            # Close the application immediately
+            QTimer.singleShot(100, QApplication.quit)
 
         except Exception as e:
             self.log(f"Installer launch error: {str(e)}")
