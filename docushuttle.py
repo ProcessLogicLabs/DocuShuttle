@@ -63,7 +63,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.5.7"
+APP_VERSION = "1.5.8"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
