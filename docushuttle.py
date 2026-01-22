@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -1820,8 +1820,8 @@ class DocuShuttleWindow(QMainWindow):
             batch_script = os.path.join(tempfile.gettempdir(), 'docushuttle_update.bat')
             with open(batch_script, 'w') as f:
                 f.write('@echo off\n')
-                f.write('timeout /t 2 /nobreak >nul\n')  # Wait 2 seconds for app to close
-                f.write(f'"{file_path}" /VERYSILENT /RESTARTAPPLICATIONS /NORESTART\n')
+                f.write('timeout /t 5 /nobreak >nul\n')  # Wait 5 seconds for app to close
+                f.write(f'"{file_path}" /VERYSILENT /SUPPRESSMSGBOXES /RESTARTAPPLICATIONS /NORESTART\n')
                 f.write(f'del "%~f0"\n')  # Delete the batch script itself
 
             # Launch the batch script
@@ -1833,8 +1833,10 @@ class DocuShuttleWindow(QMainWindow):
 
             self.log("Update installer scheduled, closing application...")
 
-            # Close the application immediately
-            QTimer.singleShot(100, QApplication.quit)
+            # Force close all windows and quit immediately
+            QApplication.closeAllWindows()
+            QApplication.processEvents()
+            QApplication.quit()
 
         except Exception as e:
             self.log(f"Installer launch error: {str(e)}")
