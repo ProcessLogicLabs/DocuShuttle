@@ -62,7 +62,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -1465,7 +1465,11 @@ class DocuShuttleWindow(QMainWindow):
         # Load auto-update setting
         auto_update = load_setting('auto_update')
         if auto_update is not None:
-            self.config_auto_update = auto_update
+            # Convert string to boolean (SQLite stores as string)
+            if isinstance(auto_update, str):
+                self.config_auto_update = auto_update.lower() in ('true', '1', 'yes')
+            else:
+                self.config_auto_update = bool(auto_update)
 
     def on_recipient_changed(self, text):
         """Handle recipient selection change."""
@@ -1524,7 +1528,8 @@ class DocuShuttleWindow(QMainWindow):
                 self.config_require_attachments = values['require_attachments']
                 self.config_skip_forwarded = values['skip_forwarded']
                 self.config_auto_update = values['auto_update']
-                save_setting('auto_update', self.config_auto_update)
+                # Save as string 'True' or 'False' for SQLite
+                save_setting('auto_update', str(self.config_auto_update))
                 self.log("Configuration updated")
         except Exception as e:
             # Log error and show user-friendly message
