@@ -35,7 +35,8 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QComboBox, QPushButton, QTextEdit, QDateEdit,
     QCheckBox, QGroupBox, QTabWidget, QFrame, QMessageBox, QDialog,
-    QFormLayout, QSpacerItem, QSizePolicy, QMenu, QAction, QToolButton
+    QFormLayout, QSpacerItem, QSizePolicy, QMenu, QAction, QToolButton,
+    QTableWidget, QTableWidgetItem
 )
 from PyQt5.QtCore import Qt, QDate, QTimer, pyqtSignal, QObject, QThread, QPropertyAnimation, QPointF, QRectF, QEasingCurve
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QPen, QBrush, QPainterPath, QRadialGradient
@@ -1379,10 +1380,26 @@ class DocuShuttleWindow(QMainWindow):
         files_layout = QVBoxLayout(files_group)
         files_layout.setContentsMargins(15, 20, 15, 15)
 
-        self.files_text = QTextEdit()
-        self.files_text.setReadOnly(False)
-        self.files_text.setMinimumHeight(120)
-        files_layout.addWidget(self.files_text)
+        # Create table for Files Sent
+        self.files_table = QTableWidget()
+        self.files_table.setColumnCount(4)
+        self.files_table.setHorizontalHeaderLabels(["Date/Time", "Sent Subject", "To", "Attachments"])
+
+        # Set column widths
+        self.files_table.setColumnWidth(0, 180)  # Date/Time
+        self.files_table.setColumnWidth(1, 250)  # Sent Subject
+        self.files_table.setColumnWidth(2, 220)  # To
+        self.files_table.setColumnWidth(3, 200)  # Attachments
+
+        # Table properties
+        self.files_table.setAlternatingRowColors(True)
+        self.files_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.files_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.files_table.setMinimumHeight(120)
+        self.files_table.setSortingEnabled(True)
+        self.files_table.verticalHeader().setVisible(False)
+
+        files_layout.addWidget(self.files_table)
 
         search_layout.addWidget(files_group)
 
@@ -1701,16 +1718,35 @@ class DocuShuttleWindow(QMainWindow):
         self.worker = OutlookWorker(config, 'forward')
         self.worker.signals.log_message.connect(self.log)
         self.worker.signals.display_subject.connect(self.display_subject)
-        self.worker.signals.clear_subjects.connect(self.files_text.clear)
+        self.worker.signals.clear_subjects.connect(lambda: self.files_table.setRowCount(0))
         self.worker.signals.operation_complete.connect(self.on_forward_complete)
         self.worker.signals.error.connect(self.on_error)
         self.worker.finished.connect(lambda: self.set_buttons_enabled(True))
         self.worker.start()
 
     def display_subject(self, subject, recipient, attachments):
-        """Display forwarded email details."""
-        details = f"Subject: {subject}\nTo: {recipient}\nAttachments: {attachments}\n"
-        self.files_text.append(details)
+        """Display forwarded email details in table."""
+        # Get current timestamp
+        timestamp = datetime.datetime.now(pytz.timezone(DEFAULT_TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Disable sorting while adding row
+        self.files_table.setSortingEnabled(False)
+
+        # Add new row
+        row_position = self.files_table.rowCount()
+        self.files_table.insertRow(row_position)
+
+        # Add data to columns
+        self.files_table.setItem(row_position, 0, QTableWidgetItem(timestamp))
+        self.files_table.setItem(row_position, 1, QTableWidgetItem(subject))
+        self.files_table.setItem(row_position, 2, QTableWidgetItem(recipient))
+        self.files_table.setItem(row_position, 3, QTableWidgetItem(attachments))
+
+        # Re-enable sorting
+        self.files_table.setSortingEnabled(True)
+
+        # Scroll to the new row
+        self.files_table.scrollToItem(self.files_table.item(row_position, 0))
 
     def on_forward_complete(self, scanned, forwarded):
         """Handle forward completion."""
