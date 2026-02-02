@@ -63,7 +63,7 @@ ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
 # Version and Update Configuration
-APP_VERSION = "1.5.9"
+APP_VERSION = "1.6.0"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -79,9 +79,25 @@ db_lock = threading.Lock()
 # Database path in user's app data folder
 def get_db_path():
     """Get the path to the database file in %LOCALAPPDATA%\\DocuShuttle."""
-    db_dir = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle')
-    os.makedirs(db_dir, exist_ok=True)
-    return os.path.join(db_dir, 'docushuttle.db')
+    try:
+        localappdata = os.environ.get('LOCALAPPDATA')
+        if not localappdata:
+            # Fallback to user's home directory
+            localappdata = os.path.expanduser('~')
+        db_dir = os.path.join(localappdata, 'DocuShuttle')
+        os.makedirs(db_dir, exist_ok=True)
+        db_path = os.path.join(db_dir, 'docushuttle.db')
+        return db_path
+    except Exception as e:
+        # Log error and fallback to current directory
+        try:
+            error_log = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle', 'error.log')
+            os.makedirs(os.path.dirname(error_log), exist_ok=True)
+            with open(error_log, 'a') as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] get_db_path error: {e}\n")
+        except:
+            pass
+        return 'docushuttle.db'
 
 # ============================================================================
 # STYLE CONSTANTS - OCRMill Light Theme
@@ -548,6 +564,17 @@ def init_db():
     """Initialize SQLite database and create required tables."""
     db_path = get_db_path()
     new_db = not os.path.exists(db_path)
+
+    # Log database path for debugging
+    try:
+        error_log_dir = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle')
+        os.makedirs(error_log_dir, exist_ok=True)
+        error_log = os.path.join(error_log_dir, 'error.log')
+        with open(error_log, 'a') as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] init_db: Initializing database at {db_path}\n")
+    except:
+        pass
+
     try:
         with db_lock:
             with sqlite3.connect(db_path, timeout=10) as conn:
@@ -579,8 +606,25 @@ def init_db():
                                  (key TEXT PRIMARY KEY,
                                   value TEXT)''')
                 conn.commit()
+
+        # Log success
+        try:
+            with open(error_log, 'a') as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] init_db: Database initialized successfully (new_db={new_db})\n")
+        except:
+            pass
+
         return new_db
     except Exception as e:
+        # Log error
+        try:
+            with open(error_log, 'a') as f:
+                import traceback
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] init_db ERROR: {str(e)}\n")
+                f.write(traceback.format_exc())
+                f.write("\n")
+        except:
+            pass
         raise Exception(f"Error initializing database: {str(e)}")
 
 
