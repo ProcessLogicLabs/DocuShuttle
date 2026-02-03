@@ -24,7 +24,6 @@ import re
 import time
 import json
 import subprocess
-import tempfile
 import shutil
 from queue import Queue, Empty
 from urllib.request import urlopen, Request
@@ -56,14 +55,36 @@ import pytz
 # Determine the base path for resources (handles PyInstaller bundled exe)
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
+    # For portable mode, get the directory where the exe is located
+    EXE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+    EXE_DIR = BASE_PATH
 
 ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
+# Portable mode detection - check for portable.txt in exe directory
+PORTABLE_MODE = os.path.exists(os.path.join(EXE_DIR, 'portable.txt'))
+
+
+def get_app_data_dir():
+    """Get the application data directory based on mode (portable or installed)."""
+    if PORTABLE_MODE:
+        # Portable mode: store data in 'data' subfolder next to exe
+        data_dir = os.path.join(EXE_DIR, 'data')
+    else:
+        # Installed mode: use %LOCALAPPDATA%\DocuShuttle
+        localappdata = os.environ.get('LOCALAPPDATA')
+        if not localappdata:
+            localappdata = os.path.expanduser('~')
+        data_dir = os.path.join(localappdata, 'DocuShuttle')
+
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
 # Version and Update Configuration
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -76,23 +97,17 @@ DEFAULT_TIMEZONE = 'US/Eastern'
 # Thread lock for database access
 db_lock = threading.Lock()
 
-# Database path in user's app data folder
+# Database path in app data folder (portable or installed)
 def get_db_path():
-    """Get the path to the database file in %LOCALAPPDATA%\\DocuShuttle."""
+    """Get the path to the database file."""
     try:
-        localappdata = os.environ.get('LOCALAPPDATA')
-        if not localappdata:
-            # Fallback to user's home directory
-            localappdata = os.path.expanduser('~')
-        db_dir = os.path.join(localappdata, 'DocuShuttle')
-        os.makedirs(db_dir, exist_ok=True)
+        db_dir = get_app_data_dir()
         db_path = os.path.join(db_dir, 'docushuttle.db')
         return db_path
     except Exception as e:
         # Log error and fallback to current directory
         try:
-            error_log = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle', 'error.log')
-            os.makedirs(os.path.dirname(error_log), exist_ok=True)
+            error_log = os.path.join(get_app_data_dir(), 'error.log')
             with open(error_log, 'a') as f:
                 f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] get_db_path error: {e}\n")
         except:
@@ -435,9 +450,8 @@ class UpdateChecker(QThread):
         """Download the update installer with progress reporting."""
         filepath = None
         try:
-            # Create updates directory in user's app data
-            update_dir = os.path.join(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()),
-                                       'DocuShuttle', 'updates')
+            # Create updates directory in app data
+            update_dir = os.path.join(get_app_data_dir(), 'updates')
             os.makedirs(update_dir, exist_ok=True)
 
             # Download file
@@ -489,8 +503,7 @@ class UpdateChecker(QThread):
 
 def get_last_update_check():
     """Get timestamp of last update check from settings file."""
-    settings_path = os.path.join(os.environ.get('LOCALAPPDATA', '.'),
-                                  'DocuShuttle', 'settings.json')
+    settings_path = os.path.join(get_app_data_dir(), 'settings.json')
     try:
         if os.path.exists(settings_path):
             with open(settings_path, 'r') as f:
@@ -503,11 +516,9 @@ def get_last_update_check():
 
 def save_last_update_check():
     """Save timestamp of update check to settings file."""
-    settings_dir = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle')
-    settings_path = os.path.join(settings_dir, 'settings.json')
+    settings_path = os.path.join(get_app_data_dir(), 'settings.json')
 
     try:
-        os.makedirs(settings_dir, exist_ok=True)
         settings = {}
 
         if os.path.exists(settings_path):
@@ -524,8 +535,7 @@ def save_last_update_check():
 
 def get_pending_update():
     """Check if there's a downloaded update waiting to be installed."""
-    update_dir = os.path.join(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()),
-                               'DocuShuttle', 'updates')
+    update_dir = os.path.join(get_app_data_dir(), 'updates')
     if os.path.exists(update_dir):
         for filename in os.listdir(update_dir):
             if filename.endswith('.exe') and 'Setup' in filename:
@@ -535,8 +545,7 @@ def get_pending_update():
 
 def clear_pending_updates():
     """Remove any pending update files."""
-    update_dir = os.path.join(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()),
-                               'DocuShuttle', 'updates')
+    update_dir = os.path.join(get_app_data_dir(), 'updates')
     if os.path.exists(update_dir):
         try:
             shutil.rmtree(update_dir)
@@ -567,8 +576,7 @@ def init_db():
 
     # Log database path for debugging
     try:
-        error_log_dir = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle')
-        os.makedirs(error_log_dir, exist_ok=True)
+        error_log_dir = get_app_data_dir()
         error_log = os.path.join(error_log_dir, 'error.log')
         with open(error_log, 'a') as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] init_db: Initializing database at {db_path}\n")
@@ -1070,8 +1078,7 @@ class ConfigDialog(QDialog):
             except Exception as style_error:
                 # Log to file if stylesheet fails
                 try:
-                    error_log = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle', 'error.log')
-                    os.makedirs(os.path.dirname(error_log), exist_ok=True)
+                    error_log = os.path.join(get_app_data_dir(), 'error.log')
                     with open(error_log, 'a') as f:
                         f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Stylesheet error: {style_error}\n")
                 except:
@@ -1151,8 +1158,7 @@ class ConfigDialog(QDialog):
         except Exception as e:
             # Log critical error to file
             try:
-                error_log = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle', 'error.log')
-                os.makedirs(os.path.dirname(error_log), exist_ok=True)
+                error_log = os.path.join(get_app_data_dir(), 'error.log')
                 with open(error_log, 'a') as f:
                     import traceback
                     f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ConfigDialog error:\n")
@@ -1605,8 +1611,7 @@ class DocuShuttleWindow(QMainWindow):
             error_msg = f"Failed to open configuration dialog: {str(e)}"
             self.log(error_msg)
             try:
-                error_log = os.path.join(os.environ.get('LOCALAPPDATA', '.'), 'DocuShuttle', 'error.log')
-                os.makedirs(os.path.dirname(error_log), exist_ok=True)
+                error_log = os.path.join(get_app_data_dir(), 'error.log')
                 with open(error_log, 'a') as f:
                     import traceback
                     f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] show_config_dialog error:\n")
@@ -1617,7 +1622,7 @@ class DocuShuttleWindow(QMainWindow):
             QMessageBox.critical(
                 self, "Configuration Error",
                 f"Failed to open configuration dialog.\n\nError: {str(e)}\n\n"
-                f"Check error.log in %LOCALAPPDATA%\\DocuShuttle"
+                f"Check error.log in {get_app_data_dir()}"
             )
 
     def show_email_context_menu(self, position):
@@ -1951,8 +1956,9 @@ class DocuShuttleWindow(QMainWindow):
                 self.progress_dialog.close()
                 self.progress_dialog = None
 
-            # Clear pending update
-            clear_pending_updates()
+            # Verify file exists before proceeding
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Installer not found: {file_path}")
 
             # Log the action
             self.log(f"Launching installer: {file_path}")
