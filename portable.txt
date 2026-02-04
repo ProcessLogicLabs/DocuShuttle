@@ -1,0 +1,2 @@
+This file enables portable mode for DocuShuttle.
+When present, the application stores all data in a 'data' subfolder next to the executable.
