@@ -84,7 +84,7 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.6.4"
+APP_VERSION = "1.6.5"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -1804,6 +1804,11 @@ class DocuShuttleWindow(QMainWindow):
             return
 
         config = self.get_config()
+
+        # Save date range
+        save_setting('last_start_date', config['start_date'])
+        save_setting('last_end_date', config['end_date'])
+
         self.set_buttons_enabled(False)
         self.log("Starting email preview...")
 
