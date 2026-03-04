@@ -84,7 +84,7 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.6.5"
+APP_VERSION = "1.6.6"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -534,12 +534,27 @@ def save_last_update_check():
 
 
 def get_pending_update():
-    """Check if there's a downloaded update waiting to be installed."""
+    """Check if there's a downloaded update waiting to be installed.
+    Only returns updates that are newer than the current version."""
     update_dir = os.path.join(get_app_data_dir(), 'updates')
     if os.path.exists(update_dir):
         for filename in os.listdir(update_dir):
             if filename.endswith('.exe') and 'Setup' in filename:
-                return os.path.join(update_dir, filename)
+                # Extract version from filename (e.g., DocuShuttle_Setup_v1.6.5.exe)
+                match = re.search(r'_v?(\d+\.\d+\.\d+)', filename)
+                if match:
+                    file_version = match.group(1)
+                    # Only return if newer than current version
+                    current_parts = [int(x) for x in APP_VERSION.split('.')]
+                    file_parts = [int(x) for x in file_version.split('.')]
+                    if file_parts > current_parts:
+                        return os.path.join(update_dir, filename)
+                    else:
+                        # Remove outdated installer
+                        try:
+                            os.remove(os.path.join(update_dir, filename))
+                        except:
+                            pass
     return None
 
 
