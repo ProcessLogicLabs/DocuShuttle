@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton, QTextEdit, QDateEdit,
     QCheckBox, QGroupBox, QTabWidget, QFrame, QMessageBox, QDialog,
     QFormLayout, QSpacerItem, QSizePolicy, QMenu, QAction, QToolButton,
-    QTableWidget, QTableWidgetItem
+    QTableWidget, QTableWidgetItem, QCompleter
 )
 from PyQt5.QtCore import Qt, QDate, QTimer, pyqtSignal, QObject, QThread, QPropertyAnimation, QPointF, QRectF, QEasingCurve
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QPen, QBrush, QPainterPath, QRadialGradient, QLinearGradient
@@ -84,7 +84,7 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.6.6"
+APP_VERSION = "1.6.7"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
@@ -663,6 +663,46 @@ def load_email_addresses():
         return []
 
 
+def load_all_keywords():
+    """Load all saved subject keywords from Settings."""
+    try:
+        value = load_setting('saved_keywords')
+        if value:
+            return json.loads(value)
+        return ["BILLING INVOICE"]
+    except Exception:
+        return ["BILLING INVOICE"]
+
+
+def save_keyword(keyword):
+    """Add a keyword to the top of the saved keywords list."""
+    if not keyword or not keyword.strip():
+        return
+    keyword = keyword.strip()
+    try:
+        keywords = load_all_keywords()
+        if keyword in keywords:
+            keywords.remove(keyword)
+        keywords.insert(0, keyword)
+        keywords = keywords[:50]
+        save_setting('saved_keywords', json.dumps(keywords))
+    except Exception:
+        pass
+
+
+def delete_keyword(keyword):
+    """Remove a keyword from the saved keywords list."""
+    try:
+        keywords = load_all_keywords()
+        if keyword in keywords:
+            keywords.remove(keyword)
+            save_setting('saved_keywords', json.dumps(keywords))
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def save_setting(key, value):
     """Save a setting to the Settings table."""
     try:
@@ -815,6 +855,27 @@ def extract_file_number(item, file_number_prefixes):
         return None
 
 
+def get_prefixed_pdf_attachments(item, file_number_prefixes):
+    """Return list of (att_index, filename, file_number) for PDF attachments whose
+    filename matches a configured file number prefix. Only entries with a resolved
+    file number are returned."""
+    results = []
+    try:
+        for j in range(1, item.Attachments.Count + 1):
+            att = item.Attachments.Item(j)
+            if not att.FileName.lower().endswith('.pdf'):
+                continue
+            name = os.path.splitext(att.FileName)[0]
+            for prefix in file_number_prefixes:
+                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}', name)
+                if match:
+                    results.append((j, att.FileName, match.group(0)))
+                    break
+    except Exception:
+        pass
+    return results
+
+
 # ============================================================================
 # WORKER THREAD
 # ============================================================================
@@ -925,16 +986,28 @@ class OutlookWorker(QThread):
                         if sent_on < start_date or sent_on > end_date:
                             continue
 
-                        # Use file_number if available, otherwise use EntryID as unique identifier
-                        tracking_id = file_number if file_number else item.EntryID
+                        # Check for multiple PDF attachments with prefixed file numbers
+                        pdf_attachments = []
+                        if file_number_prefixes and item.Attachments.Count > 1:
+                            pdf_attachments = get_prefixed_pdf_attachments(item, file_number_prefixes)
 
-                        if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
-                            continue
-
-                        info = f"[{sent_on.strftime('%Y-%m-%d %H:%M:%S')}] {subject}"
-                        if file_number:
-                            info += f" (File Number: {file_number})"
-                        matching_emails.append(info)
+                        if len(pdf_attachments) >= 2:
+                            # Multi-PDF mode: show one preview row per prefixed PDF
+                            for _, att_filename, pdf_file_number in pdf_attachments:
+                                if skip_forwarded and check_if_forwarded_db(pdf_file_number, recipient):
+                                    continue
+                                info = (f"[{sent_on.strftime('%Y-%m-%d %H:%M:%S')}] {subject}"
+                                        f" (File Number: {pdf_file_number}) [{att_filename}]")
+                                matching_emails.append(info)
+                        else:
+                            # Single-forward mode (original behavior)
+                            tracking_id = file_number if file_number else item.EntryID
+                            if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
+                                continue
+                            info = f"[{sent_on.strftime('%Y-%m-%d %H:%M:%S')}] {subject}"
+                            if file_number:
+                                info += f" (File Number: {file_number})"
+                            matching_emails.append(info)
                     except Exception:
                         continue
 
@@ -1032,35 +1105,62 @@ class OutlookWorker(QThread):
                         if require_attachments and item.Attachments.Count == 0:
                             continue
 
-                        # Use file_number if available, otherwise use EntryID as unique identifier
-                        tracking_id = file_number if file_number else item.EntryID
+                        # Check for multiple PDF attachments with prefixed file numbers
+                        pdf_attachments = []
+                        if file_number_prefixes and item.Attachments.Count > 1:
+                            pdf_attachments = get_prefixed_pdf_attachments(item, file_number_prefixes)
 
-                        if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
-                            continue
+                        if len(pdf_attachments) >= 2:
+                            # Multi-PDF mode: forward once per prefixed PDF attachment
+                            for att_index, att_filename, pdf_file_number in pdf_attachments:
+                                if skip_forwarded and check_if_forwarded_db(pdf_file_number, recipient):
+                                    self._log(f"  Skipping {pdf_file_number}: already forwarded")
+                                    continue
 
-                        new_subject = file_number if file_number else subject
+                                forward_email = item.Forward()
+                                forward_email.To = recipient
+                                forward_email.Subject = pdf_file_number
 
-                        # Collect attachment names
-                        attachment_names = []
-                        if item.Attachments.Count > 0:
-                            for att in item.Attachments:
-                                attachment_names.append(att.FileName)
-                        attachments_str = ", ".join(attachment_names) if attachment_names else "No attachments"
+                                # Remove every attachment except this one (reverse to avoid index shift)
+                                for k in range(forward_email.Attachments.Count, 0, -1):
+                                    if k != att_index:
+                                        forward_email.Attachments.Item(k).Delete()
 
-                        forward_email = item.Forward()
-                        forward_email.To = recipient
-                        forward_email.Subject = new_subject
-                        forward_email.Send()
+                                forward_email.Send()
+                                emails_processed += 1
+                                self._log(f"Forwarded: {pdf_file_number} ({att_filename})")
+                                self.signals.display_subject.emit(pdf_file_number, recipient, att_filename)
+                                log_forwarded_email(pdf_file_number, recipient)
 
-                        emails_processed += 1
-                        self._log(f"Forwarded: {new_subject}")
-                        # Show the sent subject (new_subject) in preview
-                        self.signals.display_subject.emit(new_subject, recipient, attachments_str)
+                                if delay_seconds > 0:
+                                    time.sleep(delay_seconds)
+                        else:
+                            # Single-forward mode (original behavior)
+                            tracking_id = file_number if file_number else item.EntryID
 
-                        log_forwarded_email(tracking_id, recipient)
+                            if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
+                                continue
 
-                        if delay_seconds > 0:
-                            time.sleep(delay_seconds)
+                            new_subject = file_number if file_number else subject
+
+                            attachment_names = []
+                            if item.Attachments.Count > 0:
+                                for att in item.Attachments:
+                                    attachment_names.append(att.FileName)
+                            attachments_str = ", ".join(attachment_names) if attachment_names else "No attachments"
+
+                            forward_email = item.Forward()
+                            forward_email.To = recipient
+                            forward_email.Subject = new_subject
+                            forward_email.Send()
+
+                            emails_processed += 1
+                            self._log(f"Forwarded: {new_subject}")
+                            self.signals.display_subject.emit(new_subject, recipient, attachments_str)
+                            log_forwarded_email(tracking_id, recipient)
+
+                            if delay_seconds > 0:
+                                time.sleep(delay_seconds)
                     except Exception as e:
                         self._log(f"Error processing email: {str(e)}")
                         continue
@@ -1510,10 +1610,13 @@ class DocuShuttleWindow(QMainWindow):
 
         email_layout.addRow("Forward To:", self.recipient_combo)
 
-        self.subject_edit = QLineEdit()
-        self.subject_edit.setPlaceholderText("e.g., BILLING INVOICE")
-        self.subject_edit.setText("BILLING INVOICE")
-        email_layout.addRow("Subject Keyword:", self.subject_edit)
+        self.subject_combo = QComboBox()
+        self.subject_combo.setEditable(True)
+        self.subject_combo.setMinimumWidth(320)
+        self.subject_combo.lineEdit().setPlaceholderText("e.g., BILLING INVOICE")
+        self.subject_combo.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.subject_combo.customContextMenuRequested.connect(self.show_keyword_context_menu)
+        email_layout.addRow("Subject Keyword:", self.subject_combo)
 
         search_layout.addWidget(email_group)
 
@@ -1610,9 +1713,10 @@ class DocuShuttleWindow(QMainWindow):
 
         main_layout.addWidget(content)
 
-        # Initialize database and load emails
+        # Initialize database and load emails/keywords
         init_db()
         self.refresh_email_list()
+        self.refresh_keyword_list()
 
     def refresh_email_list(self):
         """Refresh the email combobox."""
@@ -1622,6 +1726,27 @@ class DocuShuttleWindow(QMainWindow):
         self.recipient_combo.addItems(emails)
         if current and current in emails:
             self.recipient_combo.setCurrentText(current)
+        completer = QCompleter(emails, self)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        self.recipient_combo.setCompleter(completer)
+
+    def refresh_keyword_list(self):
+        """Refresh the subject keyword combobox."""
+        current = self.subject_combo.currentText()
+        self.subject_combo.blockSignals(True)
+        self.subject_combo.clear()
+        keywords = load_all_keywords()
+        self.subject_combo.addItems(keywords)
+        if current:
+            self.subject_combo.setCurrentText(current)
+        elif keywords:
+            self.subject_combo.setCurrentIndex(0)
+        self.subject_combo.blockSignals(False)
+        completer = QCompleter(keywords, self)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        self.subject_combo.setCompleter(completer)
 
     def load_saved_state(self):
         """Load saved application state."""
@@ -1683,7 +1808,7 @@ class DocuShuttleWindow(QMainWindow):
                         self.end_date.setDate(date)
 
             self.config_prefix = prefix or ""
-            self.subject_edit.setText(keyword or "BILLING INVOICE")
+            self.subject_combo.setCurrentText(keyword or "BILLING INVOICE")
             self.config_require_attachments = req_attach == "1"
             self.config_skip_forwarded = skip_fwd == "1"
             self.config_delay = delay or "0"
@@ -1780,6 +1905,40 @@ class DocuShuttleWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "Error", "Failed to delete configuration.")
 
+    def show_keyword_context_menu(self, position):
+        """Show right-click context menu for subject keyword combobox."""
+        context_menu = QMenu(self)
+        context_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLORS['frame_bg']};
+                border: 1px solid {COLORS['border']};
+                padding: 5px;
+            }}
+            QMenu::item {{
+                padding: 8px 20px;
+            }}
+            QMenu::item:selected {{
+                background-color: {COLORS['primary']};
+                color: white;
+            }}
+        """)
+        delete_action = context_menu.addAction("Delete Keyword")
+        delete_action.triggered.connect(self.delete_current_keyword)
+        context_menu.exec_(self.subject_combo.mapToGlobal(position))
+
+    def delete_current_keyword(self):
+        """Delete current keyword from saved list."""
+        keyword = self.subject_combo.currentText().strip()
+        if not keyword:
+            QMessageBox.warning(self, "Warning", "No keyword selected to delete.")
+            return
+        if delete_keyword(keyword):
+            self.log(f"Deleted keyword '{keyword}'")
+            self.refresh_keyword_list()
+            self.subject_combo.setCurrentText("")
+        else:
+            QMessageBox.warning(self, "Warning", f"Keyword '{keyword}' not found in saved list.")
+
     def validate_inputs(self):
         """Validate form inputs."""
         recipient = self.recipient_combo.currentText().strip()
@@ -1787,7 +1946,7 @@ class DocuShuttleWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Please enter a valid email address.")
             return False
 
-        if not self.subject_edit.text().strip():
+        if not self.subject_combo.currentText().strip():
             QMessageBox.warning(self, "Error", "Subject keyword is required.")
             return False
 
@@ -1797,7 +1956,7 @@ class DocuShuttleWindow(QMainWindow):
         """Get current configuration."""
         return {
             'recipient': self.recipient_combo.currentText().strip(),
-            'subject_keyword': self.subject_edit.text().strip(),
+            'subject_keyword': self.subject_combo.currentText().strip(),
             'start_date': self.start_date.date().toString("MM/dd/yyyy"),
             'end_date': self.end_date.date().toString("MM/dd/yyyy"),
             'file_number_prefix': self.config_prefix,
@@ -1812,6 +1971,7 @@ class DocuShuttleWindow(QMainWindow):
         self.forward_btn.setEnabled(enabled)
         self.cancel_btn.setEnabled(not enabled)
         self.recipient_combo.setEnabled(enabled)
+        self.subject_combo.setEnabled(enabled)
 
     def preview_emails(self):
         """Preview matching emails."""
@@ -1819,6 +1979,9 @@ class DocuShuttleWindow(QMainWindow):
             return
 
         config = self.get_config()
+
+        save_keyword(config['subject_keyword'])
+        self.refresh_keyword_list()
 
         # Save date range
         save_setting('last_start_date', config['start_date'])
@@ -1868,6 +2031,9 @@ class DocuShuttleWindow(QMainWindow):
             # If No, continue without prefix
 
         config = self.get_config()
+
+        save_keyword(config['subject_keyword'])
+        self.refresh_keyword_list()
 
         # Save configuration
         save_config(
