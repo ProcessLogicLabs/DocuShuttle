@@ -55,31 +55,19 @@ import pytz
 # Determine the base path for resources (handles PyInstaller bundled exe)
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
-    # For portable mode, get the directory where the exe is located
-    EXE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_PATH = os.path.dirname(os.path.abspath(__file__))
-    EXE_DIR = BASE_PATH
 
 ICON_PATH = os.path.join(BASE_PATH, 'myicon.ico')
 ICON_PNG_PATH = os.path.join(BASE_PATH, 'myicon.png')
 
-# Portable mode detection - check for portable.txt in exe directory
-PORTABLE_MODE = os.path.exists(os.path.join(EXE_DIR, 'portable.txt'))
-
 
 def get_app_data_dir():
-    """Get the application data directory based on mode (portable or installed)."""
-    if PORTABLE_MODE:
-        # Portable mode: store data in 'data' subfolder next to exe
-        data_dir = os.path.join(EXE_DIR, 'data')
-    else:
-        # Installed mode: use %LOCALAPPDATA%\DocuShuttle
-        localappdata = os.environ.get('LOCALAPPDATA')
-        if not localappdata:
-            localappdata = os.path.expanduser('~')
-        data_dir = os.path.join(localappdata, 'DocuShuttle')
-
+    """Get the application data directory."""
+    localappdata = os.environ.get('LOCALAPPDATA')
+    if not localappdata:
+        localappdata = os.path.expanduser('~')
+    data_dir = os.path.join(localappdata, 'DocuShuttle')
     os.makedirs(data_dir, exist_ok=True)
     return data_dir
 
@@ -97,7 +85,7 @@ DEFAULT_TIMEZONE = 'US/Eastern'
 # Thread lock for database access
 db_lock = threading.Lock()
 
-# Database path in app data folder (portable or installed)
+# Database path in app data folder
 def get_db_path():
     """Get the path to the database file."""
     try:
