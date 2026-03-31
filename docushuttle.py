@@ -1100,25 +1100,43 @@ class OutlookWorker(QThread):
 
                         if len(pdf_attachments) >= 2:
                             # Multi-PDF mode: forward once per prefixed PDF attachment
-                            for att_index, att_filename, pdf_file_number in pdf_attachments:
+                            for _, att_filename, pdf_file_number in pdf_attachments:
+                                if self.cancel_flag:
+                                    break
                                 if skip_forwarded and check_if_forwarded_db(pdf_file_number, recipient):
                                     self._log(f"  Skipping {pdf_file_number}: already forwarded")
                                     continue
 
-                                forward_email = item.Forward()
-                                forward_email.To = recipient
-                                forward_email.Subject = pdf_file_number
+                                try:
+                                    self._log(f"  Preparing forward for {pdf_file_number} ({att_filename})...")
+                                    forward_email = item.Forward()
+                                    forward_email.To = recipient
+                                    forward_email.Subject = pdf_file_number
 
-                                # Remove every attachment except this one (reverse to avoid index shift)
-                                for k in range(forward_email.Attachments.Count, 0, -1):
-                                    if k != att_index:
-                                        forward_email.Attachments.Item(k).Delete()
+                                    # Remove every attachment except the target (match by filename, reverse to avoid index shift)
+                                    for k in range(forward_email.Attachments.Count, 0, -1):
+                                        try:
+                                            if forward_email.Attachments.Item(k).FileName != att_filename:
+                                                forward_email.Attachments.Item(k).Delete()
+                                        except Exception as del_e:
+                                            self._log(f"  Warning: could not remove attachment {k}: {del_e}")
 
-                                forward_email.Send()
-                                emails_processed += 1
-                                self._log(f"Forwarded: {pdf_file_number} ({att_filename})")
-                                self.signals.display_subject.emit(pdf_file_number, recipient, att_filename)
-                                log_forwarded_email(pdf_file_number, recipient)
+                                    forward_email.Send()
+                                    emails_processed += 1
+                                    self._log(f"Forwarded: {pdf_file_number} ({att_filename})")
+                                    self.signals.display_subject.emit(pdf_file_number, recipient, att_filename)
+                                    log_forwarded_email(pdf_file_number, recipient)
+                                except Exception as fwd_e:
+                                    error_msg = f"Error forwarding {pdf_file_number} ({att_filename}): {fwd_e}"
+                                    self._log(error_msg)
+                                    try:
+                                        import traceback
+                                        error_log = os.path.join(get_app_data_dir(), 'error.log')
+                                        with open(error_log, 'a') as f:
+                                            f.write(f"\n[{datetime.datetime.now()}] {error_msg}\n")
+                                            f.write(traceback.format_exc())
+                                    except Exception:
+                                        pass
 
                                 if delay_seconds > 0:
                                     time.sleep(delay_seconds)
