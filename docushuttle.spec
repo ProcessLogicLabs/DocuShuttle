@@ -4,7 +4,10 @@
 a = Analysis(
     ['docushuttle.py'],
     pathex=[],
-    binaries=[],
+    binaries=[
+        ('C:/Windows/System32/vcruntime140.dll', '.'),
+        ('C:/Windows/System32/vcruntime140_1.dll', '.'),
+    ],
     datas=[('myicon.ico', '.'), ('myicon.png', '.')],
     hiddenimports=['win32timezone'],
     hookspath=[],
