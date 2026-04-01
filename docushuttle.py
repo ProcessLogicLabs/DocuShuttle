@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton, QTextEdit, QDateEdit,
     QCheckBox, QGroupBox, QTabWidget, QFrame, QMessageBox, QDialog,
     QFormLayout, QSpacerItem, QSizePolicy, QMenu, QAction, QToolButton,
-    QTableWidget, QTableWidgetItem, QCompleter
+    QTableWidget, QTableWidgetItem, QHeaderView, QCompleter
 )
 from PyQt5.QtCore import Qt, QDate, QTimer, pyqtSignal, QObject, QThread, QPropertyAnimation, QPointF, QRectF, QEasingCurve
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QPen, QBrush, QPainterPath, QRadialGradient, QLinearGradient
@@ -1181,6 +1181,150 @@ class OutlookWorker(QThread):
 
 
 # ============================================================================
+# FORWARD HISTORY DIALOG
+# ============================================================================
+def search_forwarded_emails(file_number="", recipient=""):
+    """Search the ForwardedEmails table. Returns list of (file_number, recipient, forwarded_at)."""
+    results = []
+    try:
+        with db_lock:
+            conn = sqlite3.connect(get_db_path())
+            c = conn.cursor()
+            query = "SELECT file_number, recipient, forwarded_at FROM ForwardedEmails WHERE 1=1"
+            params = []
+            if file_number:
+                query += " AND file_number LIKE ?"
+                params.append(f"%{file_number}%")
+            if recipient:
+                query += " AND recipient LIKE ?"
+                params.append(f"%{recipient}%")
+            query += " ORDER BY forwarded_at DESC"
+            c.execute(query, params)
+            results = c.fetchall()
+            conn.close()
+    except Exception:
+        pass
+    return results
+
+
+class ForwardHistoryDialog(QDialog):
+    """Dialog for searching forwarded email history."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Forward History")
+        self.setMinimumSize(700, 500)
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {COLORS['bg']};
+            }}
+            QLabel {{
+                color: {COLORS['text']};
+                font-size: 12px;
+            }}
+            QLineEdit {{
+                padding: 6px 10px;
+                border: 1px solid {COLORS['input_border']};
+                border-radius: 4px;
+                background-color: {COLORS['input_bg']};
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 2px solid {COLORS['primary']};
+            }}
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_hover']};
+            }}
+            QTableWidget {{
+                background-color: {COLORS['frame_bg']};
+                border: 1px solid {COLORS['border']};
+                gridline-color: {COLORS['border']};
+                font-size: 11px;
+            }}
+            QTableWidget::item {{
+                padding: 4px 8px;
+            }}
+            QHeaderView::section {{
+                background-color: {COLORS['primary']};
+                color: white;
+                padding: 6px 8px;
+                border: none;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # Search fields
+        search_frame = QWidget()
+        search_layout = QHBoxLayout(search_frame)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+
+        search_layout.addWidget(QLabel("File Number:"))
+        self.file_number_edit = QLineEdit()
+        self.file_number_edit.setPlaceholderText("Search by file number...")
+        self.file_number_edit.returnPressed.connect(self.do_search)
+        search_layout.addWidget(self.file_number_edit)
+
+        search_layout.addWidget(QLabel("Recipient:"))
+        self.recipient_edit = QLineEdit()
+        self.recipient_edit.setPlaceholderText("Search by recipient...")
+        self.recipient_edit.returnPressed.connect(self.do_search)
+        search_layout.addWidget(self.recipient_edit)
+
+        search_btn = QPushButton("Search")
+        search_btn.clicked.connect(self.do_search)
+        search_layout.addWidget(search_btn)
+
+        layout.addWidget(search_frame)
+
+        # Results table
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["File Number", "Recipient", "Forwarded At"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        layout.addWidget(self.table)
+
+        # Status bar
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        layout.addWidget(self.status_label)
+
+        # Load all records on open
+        self.do_search()
+
+    def do_search(self):
+        """Execute search and populate table."""
+        file_number = self.file_number_edit.text().strip()
+        recipient = self.recipient_edit.text().strip()
+        results = search_forwarded_emails(file_number, recipient)
+
+        self.table.setRowCount(len(results))
+        for row, (fn, recip, fwd_at) in enumerate(results):
+            self.table.setItem(row, 0, QTableWidgetItem(fn or ""))
+            self.table.setItem(row, 1, QTableWidgetItem(recip or ""))
+            self.table.setItem(row, 2, QTableWidgetItem(fwd_at or ""))
+
+        self.status_label.setText(f"{len(results)} record(s) found")
+
+
+# ============================================================================
 # CONFIGURATION DIALOG
 # ============================================================================
 class ConfigDialog(QDialog):
@@ -1572,6 +1716,9 @@ class DocuShuttleWindow(QMainWindow):
         config_action = config_menu.addAction("Configuration...")
         config_action.triggered.connect(self.show_config_dialog)
 
+        history_action = config_menu.addAction("Forward History...")
+        history_action.triggered.connect(self.show_forward_history)
+
         config_menu.addSeparator()
 
         check_update_action = config_menu.addAction("Check for Updates...")
@@ -1890,6 +2037,11 @@ class DocuShuttleWindow(QMainWindow):
                 f"Failed to open configuration dialog.\n\nError: {str(e)}\n\n"
                 f"Check error.log in {get_app_data_dir()}"
             )
+
+    def show_forward_history(self):
+        """Show the forward history search dialog."""
+        dialog = ForwardHistoryDialog(self)
+        dialog.exec_()
 
     def show_email_context_menu(self, position):
         """Show right-click context menu for email combobox."""
