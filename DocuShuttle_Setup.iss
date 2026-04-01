@@ -2,7 +2,7 @@
 ; Version: 1.6.6
 
 #define MyAppName "DocuShuttle"
-#define MyAppVersion "1.6.9"
+#define MyAppVersion "1.7.0"
 #define MyAppPublisher "Process Logic Labs"
 #define MyAppExeName "DocuShuttle.exe"
 

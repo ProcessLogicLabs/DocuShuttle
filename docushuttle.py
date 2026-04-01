@@ -72,10 +72,10 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.6.9"
+APP_VERSION = "1.7.0"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-UPDATE_CHECK_INTERVAL = 86400  # Check once per day (seconds)
+UPDATE_CHECK_INTERVAL = 3600  # Check once per hour (seconds)
 
 # Constants
 LOG_BUFFER_SIZE = 10
@@ -1606,15 +1606,39 @@ class DocuShuttleWindow(QMainWindow):
         email_layout.setContentsMargins(15, 20, 15, 15)
         email_layout.setSpacing(12)
 
-        # Forward To combobox with right-click context menu
+        # Forward To combobox with delete button
         self.recipient_combo = QComboBox()
         self.recipient_combo.setEditable(True)
-        self.recipient_combo.setMinimumWidth(320)
+        self.recipient_combo.setMinimumWidth(280)
         self.recipient_combo.currentTextChanged.connect(self.on_recipient_changed)
         self.recipient_combo.setContextMenuPolicy(Qt.CustomContextMenu)
         self.recipient_combo.customContextMenuRequested.connect(self.show_email_context_menu)
 
-        email_layout.addRow("Forward To:", self.recipient_combo)
+        self.delete_email_btn = QToolButton()
+        self.delete_email_btn.setText("\u2715")
+        self.delete_email_btn.setToolTip("Delete selected email address")
+        self.delete_email_btn.setFixedSize(28, 28)
+        self.delete_email_btn.clicked.connect(self.delete_current_config)
+        self.delete_email_btn.setStyleSheet(f"""
+            QToolButton {{
+                background-color: transparent;
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                color: {COLORS['text_secondary']};
+                font-size: 14px;
+            }}
+            QToolButton:hover {{
+                background-color: #ffdddd;
+                border-color: #cc0000;
+                color: #cc0000;
+            }}
+        """)
+
+        email_row = QHBoxLayout()
+        email_row.setSpacing(6)
+        email_row.addWidget(self.recipient_combo)
+        email_row.addWidget(self.delete_email_btn)
+        email_layout.addRow("Forward To:", email_row)
 
         self.subject_combo = QComboBox()
         self.subject_combo.setEditable(True)
