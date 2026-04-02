@@ -1,27 +1,35 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 import os
 import sys
-import glob
 
-# Find VC runtime DLLs dynamically
-vcruntime_dlls = []
+# Collect VC runtime and Python DLLs dynamically
+extra_binaries = []
 search_paths = [
     os.path.join(os.environ.get('SYSTEMROOT', r'C:\Windows'), 'System32'),
     os.path.dirname(sys.executable),
     os.path.join(os.path.dirname(sys.executable), 'DLLs'),
 ]
+dll_names = [
+    'vcruntime140.dll',
+    'vcruntime140_1.dll',
+    'python3.dll',
+    'msvcp140.dll',
+]
+collected = set()
 for search_dir in search_paths:
-    for dll_name in ['vcruntime140.dll', 'vcruntime140_1.dll']:
+    for dll_name in dll_names:
+        if dll_name in collected:
+            continue
         dll_path = os.path.join(search_dir, dll_name)
-        if os.path.exists(dll_path) and dll_path not in [d[0] for d in vcruntime_dlls]:
-            vcruntime_dlls.append((dll_path, '.'))
+        if os.path.exists(dll_path):
+            extra_binaries.append((dll_path, '.'))
+            collected.add(dll_name)
 
 a = Analysis(
     ['docushuttle.py'],
     pathex=[],
-    binaries=vcruntime_dlls,
+    binaries=extra_binaries,
     datas=[('myicon.ico', '.'), ('myicon.png', '.')],
     hiddenimports=['win32timezone'],
     hookspath=[],
