@@ -28,9 +28,6 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
-      - name: Install Visual C++ Redistributable
-        run: choco install vcredist140 --yes
-
       - name: Build with PyInstaller
         run: |
           pyinstaller docushuttle.spec
