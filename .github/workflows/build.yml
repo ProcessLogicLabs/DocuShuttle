@@ -53,4 +53,4 @@ jobs:
         with:
           files: dist\DocuShuttle_Setup_v*.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
