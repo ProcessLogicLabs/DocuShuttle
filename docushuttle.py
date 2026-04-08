@@ -72,7 +72,7 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 3600  # Check once per hour (seconds)
@@ -1111,7 +1111,7 @@ class OutlookWorker(QThread):
                                     self._log(f"  Preparing forward for {pdf_file_number} ({att_filename})...")
                                     forward_email = item.Forward()
                                     forward_email.To = recipient
-                                    forward_email.Subject = pdf_file_number
+                                    forward_email.Subject = pdf_file_number.rstrip('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz')
 
                                     # Remove every attachment except the target (match by filename, reverse to avoid index shift)
                                     for k in range(forward_email.Attachments.Count, 0, -1):
@@ -1147,7 +1147,7 @@ class OutlookWorker(QThread):
                             if skip_forwarded and check_if_forwarded_db(tracking_id, recipient):
                                 continue
 
-                            new_subject = file_number if file_number else subject
+                            new_subject = file_number.rstrip('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz') if file_number else subject
 
                             attachment_names = []
                             if item.Attachments.Count > 0:
