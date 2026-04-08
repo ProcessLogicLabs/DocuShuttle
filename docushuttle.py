@@ -72,7 +72,7 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 3600  # Check once per hour (seconds)
@@ -824,18 +824,18 @@ def convert_date_format(date_str):
 
 
 def extract_file_number(item, file_number_prefixes):
-    """Extract file number from email."""
+    """Extract file number from email. Matches prefix + digits + optional trailing alpha."""
     try:
         if item.Attachments.Count > 0:
             attachment = item.Attachments.Item(1)
             filename = os.path.splitext(attachment.FileName)[0]
             for prefix in file_number_prefixes:
-                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}', filename)
+                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}[A-Za-z]?', filename)
                 if match:
                     return match.group(0)
         subject = item.Subject if item.Subject else ""
         for prefix in file_number_prefixes:
-            match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}', subject)
+            match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}[A-Za-z]?', subject)
             if match:
                 return match.group(0)
         return None
@@ -855,7 +855,7 @@ def get_prefixed_pdf_attachments(item, file_number_prefixes):
                 continue
             name = os.path.splitext(att.FileName)[0]
             for prefix in file_number_prefixes:
-                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}', name)
+                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}[A-Za-z]?', name)
                 if match:
                     results.append((j, att.FileName, match.group(0)))
                     break
