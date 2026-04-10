@@ -1427,30 +1427,40 @@ class ConfigDialog(QDialog):
 
             <p><b>1. Outlook Requirements:</b></p>
             <ul>
-                <li>Microsoft Outlook must be installed and configured</li>
+                <li>Microsoft Outlook desktop must be installed and configured</li>
                 <li>You must have at least one email account set up in Outlook</li>
                 <li>Outlook should be running or able to start automatically</li>
             </ul>
 
-            <p><b>2. Add Recipient Emails:</b></p>
+            <p><b>2. Add a Recipient:</b></p>
             <ul>
-                <li>Click the <b>Manage Emails</b> button in the main window</li>
-                <li>Enter recipient email addresses (one per line or comma-separated)</li>
-                <li>These are the addresses emails will be forwarded TO</li>
+                <li>Type a recipient email address in the <b>Forward To</b> field</li>
+                <li>This is the address emails will be forwarded TO</li>
+                <li>Previously used recipients are saved and appear in the dropdown</li>
+                <li>Right-click a saved recipient to delete its configuration</li>
             </ul>
 
-            <p><b>3. Configure Settings (Optional):</b></p>
+            <p><b>3. Set a Subject Keyword:</b></p>
             <ul>
-                <li><b>File Number Prefixes:</b> Filter emails by file number (e.g., "759,123")</li>
-                <li><b>Delay:</b> Set seconds between forwards to avoid rate limits</li>
-                <li><b>Require Attachments:</b> Only forward emails with attachments</li>
-                <li><b>Skip Previously Forwarded:</b> Prevent duplicate forwards</li>
+                <li>Type or select a keyword in the <b>Subject Keyword</b> field (e.g., "BILLING INVOICE")</li>
+                <li>Previously used keywords are saved and appear in the dropdown</li>
+                <li>Right-click a saved keyword to delete it</li>
             </ul>
 
-            <p><b>4. First Run:</b></p>
+            <p><b>4. Configure Settings:</b></p>
+            <ul>
+                <li>Open the <b>hamburger menu</b> (top right) and select <b>Configuration...</b></li>
+                <li><b>File Number Prefixes:</b> Comma-separated prefixes to filter by file number (e.g., "760,123")</li>
+                <li><b>Delay:</b> Seconds to wait between each forwarded email</li>
+                <li><b>Require Attachments:</b> Only forward emails that have attachments</li>
+                <li><b>Skip Previously Forwarded:</b> Prevent duplicate forwards using the tracking database</li>
+            </ul>
+
+            <p><b>5. First Run:</b></p>
             <ul>
                 <li>Outlook may prompt you to allow access - click <b>Allow</b></li>
                 <li>If using Exchange, ensure you have proper permissions</li>
+                <li>Your configuration is saved automatically when you forward</li>
             </ul>
             """)
             setup_layout.addWidget(setup_text)
@@ -1468,33 +1478,55 @@ class ConfigDialog(QDialog):
 
             <p><b>Basic Workflow:</b></p>
             <ol>
-                <li>Select a <b>Recipient Email</b> from the dropdown (destination)</li>
-                <li>Enter a <b>Subject Filter</b> to match emails (e.g., "Invoice")</li>
-                <li>Set the <b>Date Range</b> for emails to search</li>
-                <li>Click <b>Search & Forward</b> to process matching emails</li>
+                <li>Select or type a <b>Forward To</b> recipient email address</li>
+                <li>Select or type a <b>Subject Keyword</b> to match emails (e.g., "BILLING INVOICE")</li>
+                <li>Set the <b>Start Date</b> and <b>End Date</b> for the search range</li>
+                <li>Click <b>Preview</b> to see matching emails without forwarding</li>
+                <li>Click <b>Scan and Forward</b> to forward all matching emails</li>
             </ol>
 
             <p><b>Understanding the Interface:</b></p>
             <ul>
-                <li><b>Recipient Email:</b> Where forwarded emails will be sent</li>
-                <li><b>Subject Filter:</b> Text to match in email subjects</li>
-                <li><b>Start/End Date:</b> Date range to search in Sent Items</li>
-                <li><b>Log Window:</b> Shows progress and results of operations</li>
+                <li><b>Forward To:</b> Recipient dropdown with typeahead - where emails will be sent</li>
+                <li><b>Subject Keyword:</b> Keyword dropdown with typeahead - text to match in email subjects</li>
+                <li><b>Start/End Date:</b> Date range to search in your Sent Items folder</li>
+                <li><b>Files Sent Table:</b> Shows matched/forwarded emails with date, subject, recipient, and attachments</li>
+                <li><b>Log Tab:</b> Real-time progress and operation details</li>
+            </ul>
+
+            <p><b>Multi-PDF Forwarding:</b></p>
+            <ul>
+                <li>When an email has <b>multiple PDF attachments</b> matching your file number prefixes,
+                    each PDF is forwarded <b>separately</b> with only that attachment</li>
+                <li>The subject line is set to the file number extracted from the PDF filename</li>
+                <li>Example: An email with 7607182A.pdf, 7607189A.pdf, 7607303A.pdf produces
+                    three forwards with subjects 7607182, 7607189, 7607303</li>
+            </ul>
+
+            <p><b>Hamburger Menu Options:</b></p>
+            <ul>
+                <li><b>Configuration:</b> Set file number prefixes, delay, attachment and duplicate settings</li>
+                <li><b>Forward History:</b> Search the database for previously forwarded emails by file number or recipient</li>
+                <li><b>Check for Updates:</b> Manually check for a new version on GitHub</li>
             </ul>
 
             <p><b>Tips:</b></p>
             <ul>
-                <li>Use specific subject filters to avoid forwarding unwanted emails</li>
-                <li>Enable "Skip Previously Forwarded" to prevent duplicates</li>
-                <li>Check the log window for detailed operation status</li>
-                <li>Use "Require Attachments" if you only want document emails</li>
+                <li>Use <b>Preview</b> first to verify matches before forwarding</li>
+                <li>Enable <b>Skip Previously Forwarded</b> to prevent duplicates</li>
+                <li>Use <b>Require Attachments</b> if you only want document emails</li>
+                <li>Set a <b>delay</b> of 1-3 seconds for large batches to avoid throttling</li>
+                <li>Check <b>Forward History</b> to verify what has already been sent</li>
+                <li>Click <b>Cancel</b> to stop an operation mid-batch</li>
             </ul>
 
             <p><b>Troubleshooting:</b></p>
             <ul>
-                <li><b>No emails found:</b> Check date range and subject filter</li>
-                <li><b>Outlook errors:</b> Ensure Outlook is running and accessible</li>
-                <li><b>Permission denied:</b> Allow DocuShuttle access in Outlook prompts</li>
+                <li><b>No emails found:</b> Check date range, subject keyword, and file number prefixes</li>
+                <li><b>Outlook errors:</b> Ensure Outlook desktop is running and accessible</li>
+                <li><b>Permission denied:</b> Allow DocuShuttle access when Outlook prompts</li>
+                <li><b>Multi-PDF not splitting:</b> Ensure file number prefixes are configured and the email has 2+ matching PDFs</li>
+                <li><b>Errors during forwarding:</b> Check error.log in %LOCALAPPDATA%\\DocuShuttle\\</li>
             </ul>
             """)
             usage_layout.addWidget(usage_text)
