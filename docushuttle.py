@@ -72,7 +72,7 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.7.4"
+APP_VERSION = "1.7.5"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 3600  # Check once per hour (seconds)
@@ -824,20 +824,21 @@ def convert_date_format(date_str):
 
 
 def extract_file_number(item, file_number_prefixes):
-    """Extract file number from email. Matches prefix + digits + optional trailing alpha."""
+    """Extract file number from email. Matches prefix + digits + optional trailing alpha,
+    tolerating an optional space between the digits and the alpha (e.g. '7609500 F')."""
     try:
         if item.Attachments.Count > 0:
             attachment = item.Attachments.Item(1)
             filename = os.path.splitext(attachment.FileName)[0]
             for prefix in file_number_prefixes:
-                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}[A-Za-z]?', filename)
+                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}\s?[A-Za-z]?', filename)
                 if match:
-                    return match.group(0)
+                    return match.group(0).replace(' ', '')
         subject = item.Subject if item.Subject else ""
         for prefix in file_number_prefixes:
-            match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}[A-Za-z]?', subject)
+            match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}\s?[A-Za-z]?', subject)
             if match:
-                return match.group(0)
+                return match.group(0).replace(' ', '')
         return None
     except Exception:
         return None
@@ -846,7 +847,8 @@ def extract_file_number(item, file_number_prefixes):
 def get_prefixed_pdf_attachments(item, file_number_prefixes):
     """Return list of (att_index, filename, file_number) for PDF attachments whose
     filename matches a configured file number prefix. Only entries with a resolved
-    file number are returned."""
+    file number are returned. Tolerates an optional space between digits and the
+    trailing alpha character (e.g. '7609500 F.pdf')."""
     results = []
     try:
         for j in range(1, item.Attachments.Count + 1):
@@ -855,9 +857,9 @@ def get_prefixed_pdf_attachments(item, file_number_prefixes):
                 continue
             name = os.path.splitext(att.FileName)[0]
             for prefix in file_number_prefixes:
-                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}[A-Za-z]?', name)
+                match = re.search(rf'{prefix}\d{{{7-len(prefix)}}}\s?[A-Za-z]?', name)
                 if match:
-                    results.append((j, att.FileName, match.group(0)))
+                    results.append((j, att.FileName, match.group(0).replace(' ', '')))
                     break
     except Exception:
         pass
