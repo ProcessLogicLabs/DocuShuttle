@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton, QTextEdit, QDateEdit,
     QCheckBox, QGroupBox, QTabWidget, QFrame, QMessageBox, QDialog,
     QFormLayout, QSpacerItem, QSizePolicy, QMenu, QAction, QToolButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QCompleter
+    QTableWidget, QTableWidgetItem, QHeaderView, QCompleter, QFileDialog
 )
 from PyQt5.QtCore import Qt, QDate, QTimer, pyqtSignal, QObject, QThread, QPropertyAnimation, QPointF, QRectF, QEasingCurve
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QPainter, QPen, QBrush, QPainterPath, QRadialGradient, QLinearGradient
@@ -72,7 +72,7 @@ def get_app_data_dir():
     return data_dir
 
 # Version and Update Configuration
-APP_VERSION = "1.7.5"
+APP_VERSION = "1.7.6"
 GITHUB_REPO = "ProcessLogicLabs/DocuShuttle"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 UPDATE_CHECK_INTERVAL = 3600  # Check once per hour (seconds)
@@ -867,6 +867,221 @@ def get_prefixed_pdf_attachments(item, file_number_prefixes):
 
 
 # ============================================================================
+# TEMPLATE SAMPLE PULLER (EntryOps ingestion-template sourcing)
+# ============================================================================
+TEMPLATE_SOURCE_FOLDERS = {
+    "SIGMA": ["SIGMA", "Docs to Docuware"],
+    "HOUCLRDOCS": ["HOUCLRDOCS", "Docs to Docuware"],
+}
+TEMPLATE_CATEGORY_FILTER = "DOCUWARE"
+DEFAULT_TEMPLATE_SAMPLE_DEST = r"\\tsclient\LinuxShare\new_template_request"
+TEMPLATE_SAMPLES_ADMIN_USERS = {"hpayne"}
+
+
+def _is_template_samples_admin():
+    """Return True if the current Windows user is allowed to see the
+    Template Samples tab. Membership check is case-insensitive."""
+    try:
+        user = (os.environ.get("USERNAME") or "").strip().lower()
+    except Exception:
+        return False
+    return user in {u.lower() for u in TEMPLATE_SAMPLES_ADMIN_USERS}
+_PR_ATTACH_HIDDEN = "http://schemas.microsoft.com/mapi/proptag/0x7FFE000B"
+_PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+
+
+def _resolve_outlook_folder_by_path(mapi, path_parts):
+    """Walk top-level store name and subfolders to reach a target folder."""
+    if not path_parts:
+        raise ValueError("Folder path is empty.")
+    try:
+        folder = mapi.Folders.Item(path_parts[0])
+    except Exception as e:
+        raise Exception(
+            f"Outlook mailbox/store '{path_parts[0]}' not found. "
+            f"Verify the mailbox is loaded in this Outlook profile."
+        ) from e
+    for part in path_parts[1:]:
+        try:
+            folder = folder.Folders.Item(part)
+        except Exception as e:
+            raise Exception(
+                f"Outlook folder '{part}' not found under '{folder.Name}'."
+            ) from e
+    return folder
+
+
+def _get_sender_key(item):
+    """Return a stable, human-readable sender identifier (SMTP if resolvable)."""
+    try:
+        addr = (item.SenderEmailAddress or "").strip()
+        if addr and not addr.startswith("/"):
+            return addr.lower()
+        try:
+            exch_user = item.Sender.GetExchangeUser() if item.Sender else None
+            if exch_user and exch_user.PrimarySmtpAddress:
+                return exch_user.PrimarySmtpAddress.strip().lower()
+        except Exception:
+            pass
+        try:
+            smtp = item.PropertyAccessor.GetProperty(_PR_SMTP_ADDRESS)
+            if smtp:
+                return str(smtp).strip().lower()
+        except Exception:
+            pass
+        return (item.SenderName or "unknown").strip().lower()
+    except Exception:
+        return "unknown"
+
+
+def _is_hidden_attachment(att):
+    """True when the attachment is an inline/hidden item (e.g. signature images)."""
+    try:
+        return bool(att.PropertyAccessor.GetProperty(_PR_ATTACH_HIDDEN))
+    except Exception:
+        return False
+
+
+def _sanitize_dir_name(name):
+    """Make a string safe for use as a folder or file name on Windows."""
+    invalid = '<>:"/\\|?*'
+    cleaned = "".join("_" if c in invalid else c for c in (name or ""))
+    cleaned = cleaned.strip().strip(".")
+    return cleaned or "unknown"
+
+
+def _item_has_category(item, category):
+    """True when the Outlook item carries the given category (case-insensitive).
+    Categories on a mail item are a comma-separated string."""
+    if not category:
+        return True
+    try:
+        cats = item.Categories or ""
+    except Exception:
+        return False
+    target = category.strip().lower()
+    return any(c.strip().lower() == target for c in cats.split(","))
+
+
+def pull_template_samples(start_date, end_date,
+                          folder_path,
+                          category=TEMPLATE_CATEGORY_FILTER,
+                          dest_dir=DEFAULT_TEMPLATE_SAMPLE_DEST,
+                          logger=None):
+    """Collect one attachment set per unique sender from a 'Docs to Docuware'
+    Outlook folder within a user-defined date range. Output is grouped into a
+    per-sender subdirectory under dest_dir and is intended for building EntryOps
+    ingestion templates.
+
+    Strategy: items are scanned newest-first; for each unseen sender the function
+    selects the most recent message that carries the configured category and has
+    at least one non-hidden attachment, then copies those attachments. Inline
+    signature images are skipped.
+
+    Args:
+        start_date: timezone-aware datetime (inclusive lower bound on ReceivedTime)
+        end_date: timezone-aware datetime (inclusive upper bound on ReceivedTime)
+        folder_path: list of mailbox/subfolder names, e.g. ["SIGMA", "Docs to Docuware"]
+        category: Outlook category required on the item (default "DOCUWARE");
+                  pass falsy to disable the filter
+        dest_dir: destination root directory; a subfolder is created per sender
+        logger: optional callable(str) for progress messages
+
+    Returns:
+        dict {senders_copied, senders_skipped, attachments_copied, errors}
+    """
+    def log(msg):
+        if logger:
+            logger(msg)
+
+    pythoncom.CoInitialize()
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        mapi = outlook.GetNamespace("MAPI")
+        folder = _resolve_outlook_folder_by_path(mapi, folder_path)
+        cat_desc = f" with category '{category}'" if category else ""
+        log(f"Connected to '{' / '.join(folder_path)}' "
+            f"({folder.Items.Count} items){cat_desc}.")
+
+        os.makedirs(dest_dir, exist_ok=True)
+
+        items = folder.Items
+        try:
+            items.Sort("[ReceivedTime]", True)
+        except Exception:
+            pass
+
+        seen_senders = set()
+        senders_copied = 0
+        senders_skipped = 0
+        attachments_copied = 0
+        errors = []
+
+        for item in items:
+            try:
+                if getattr(item, "Class", None) != 43:
+                    continue
+                received = item.ReceivedTime
+                if received is None or received < start_date or received > end_date:
+                    continue
+                if category and not _item_has_category(item, category):
+                    continue
+                if item.Attachments.Count == 0:
+                    continue
+
+                sender_key = _get_sender_key(item)
+                if sender_key in seen_senders:
+                    continue
+
+                real_attachments = []
+                for j in range(1, item.Attachments.Count + 1):
+                    att = item.Attachments.Item(j)
+                    if _is_hidden_attachment(att):
+                        continue
+                    real_attachments.append((j, att))
+                if not real_attachments:
+                    continue
+
+                sender_dir = os.path.join(dest_dir, _sanitize_dir_name(sender_key))
+                if os.path.isdir(sender_dir) and os.listdir(sender_dir):
+                    log(f"Skipping {sender_key} — sample already present.")
+                    seen_senders.add(sender_key)
+                    senders_skipped += 1
+                    continue
+
+                os.makedirs(sender_dir, exist_ok=True)
+                copied_here = 0
+                for idx, att in real_attachments:
+                    safe_name = _sanitize_dir_name(att.FileName)
+                    target = os.path.join(sender_dir, safe_name)
+                    if os.path.exists(target):
+                        base, ext = os.path.splitext(safe_name)
+                        target = os.path.join(sender_dir, f"{base}_{idx}{ext}")
+                    att.SaveAsFile(target)
+                    copied_here += 1
+
+                seen_senders.add(sender_key)
+                senders_copied += 1
+                attachments_copied += copied_here
+                log(f"Copied {copied_here} file(s) from {sender_key}.")
+            except Exception as item_err:
+                errors.append(str(item_err))
+                log(f"Error processing item: {item_err}")
+
+        log(f"Done. {senders_copied} senders copied, "
+            f"{senders_skipped} skipped (already present), "
+            f"{attachments_copied} files total.")
+        return {
+            "senders_copied": senders_copied,
+            "senders_skipped": senders_skipped,
+            "attachments_copied": attachments_copied,
+            "errors": errors,
+        }
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# ============================================================================
 # WORKER THREAD
 # ============================================================================
 class OutlookWorker(QThread):
@@ -1178,6 +1393,55 @@ class OutlookWorker(QThread):
 
             self.signals.operation_complete.emit(emails_scanned, emails_processed)
 
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
+# ============================================================================
+# SIGMA TEMPLATE WORKER
+# ============================================================================
+class SigmaTemplateSignals(QObject):
+    """Signals for the SIGMA template-sample worker."""
+    log_message = pyqtSignal(str)
+    sender_copied = pyqtSignal(str, int)        # sender, file_count
+    pull_complete = pyqtSignal(dict)             # result dict
+    error = pyqtSignal(str)
+
+
+class SigmaTemplateWorker(QThread):
+    """Worker thread that calls pull_template_samples without blocking the UI."""
+
+    def __init__(self, start_date, end_date, folder_path, dest_dir,
+                 category=TEMPLATE_CATEGORY_FILTER):
+        super().__init__()
+        self.start_date = start_date
+        self.end_date = end_date
+        self.folder_path = folder_path
+        self.dest_dir = dest_dir
+        self.category = category
+        self.signals = SigmaTemplateSignals()
+
+    def run(self):
+        try:
+            def emit_log(msg):
+                self.signals.log_message.emit(msg)
+                if msg.startswith("Copied "):
+                    try:
+                        parts = msg.split()
+                        count = int(parts[1])
+                        sender = parts[-1].rstrip(".")
+                        self.signals.sender_copied.emit(sender, count)
+                    except Exception:
+                        pass
+
+            result = pull_template_samples(
+                self.start_date, self.end_date,
+                folder_path=self.folder_path,
+                category=self.category,
+                dest_dir=self.dest_dir,
+                logger=emit_log,
+            )
+            self.signals.pull_complete.emit(result)
         except Exception as e:
             self.signals.error.emit(str(e))
 
@@ -1911,6 +2175,108 @@ class DocuShuttleWindow(QMainWindow):
 
         tabs.addTab(search_tab, "  Search  ")
 
+        # ------------------------------------------------------------------
+        # Template Samples tab — pull one attachment set per sender from a
+        # 'Docs to Docuware' folder for EntryOps template-building.
+        # Admin-only: hidden for standard users.
+        # ------------------------------------------------------------------
+        if _is_template_samples_admin():
+            sigma_tab = QWidget()
+            sigma_layout = QVBoxLayout(sigma_tab)
+            sigma_layout.setContentsMargins(10, 15, 10, 10)
+            sigma_layout.setSpacing(12)
+
+            sigma_source_group = QGroupBox("Source Mailbox")
+            sigma_source_layout = QHBoxLayout(sigma_source_group)
+            sigma_source_layout.setContentsMargins(15, 20, 15, 15)
+            sigma_source_layout.setSpacing(12)
+            sigma_source_layout.addWidget(QLabel("Mailbox:"))
+            self.sigma_mailbox_combo = QComboBox()
+            for name in TEMPLATE_SOURCE_FOLDERS.keys():
+                self.sigma_mailbox_combo.addItem(name)
+            saved_mailbox = load_setting('sigma_mailbox') or "SIGMA"
+            idx = self.sigma_mailbox_combo.findText(saved_mailbox)
+            if idx >= 0:
+                self.sigma_mailbox_combo.setCurrentIndex(idx)
+            self.sigma_mailbox_combo.setMinimumWidth(220)
+            sigma_source_layout.addWidget(self.sigma_mailbox_combo)
+            sigma_source_layout.addWidget(QLabel(f"Category filter: {TEMPLATE_CATEGORY_FILTER}"))
+            sigma_source_layout.addStretch()
+            sigma_layout.addWidget(sigma_source_group)
+
+            sigma_date_group = QGroupBox("Date Range")
+            sigma_date_layout = QHBoxLayout(sigma_date_group)
+            sigma_date_layout.setContentsMargins(15, 20, 15, 15)
+            sigma_date_layout.setSpacing(20)
+
+            sigma_start_layout = QHBoxLayout()
+            sigma_start_layout.addWidget(QLabel("Start Date:"))
+            self.sigma_start_date = QDateEdit()
+            self.sigma_start_date.setCalendarPopup(True)
+            self.sigma_start_date.setDate(QDate.currentDate().addDays(-30))
+            self.sigma_start_date.setDisplayFormat("MM/dd/yyyy")
+            sigma_start_layout.addWidget(self.sigma_start_date)
+            sigma_date_layout.addLayout(sigma_start_layout)
+
+            sigma_end_layout = QHBoxLayout()
+            sigma_end_layout.addWidget(QLabel("End Date:"))
+            self.sigma_end_date = QDateEdit()
+            self.sigma_end_date.setCalendarPopup(True)
+            self.sigma_end_date.setDate(QDate.currentDate())
+            self.sigma_end_date.setDisplayFormat("MM/dd/yyyy")
+            sigma_end_layout.addWidget(self.sigma_end_date)
+            sigma_date_layout.addLayout(sigma_end_layout)
+
+            sigma_date_layout.addStretch()
+            sigma_layout.addWidget(sigma_date_group)
+
+            sigma_dest_group = QGroupBox("Destination")
+            sigma_dest_layout = QHBoxLayout(sigma_dest_group)
+            sigma_dest_layout.setContentsMargins(15, 20, 15, 15)
+            sigma_dest_layout.setSpacing(8)
+
+            self.sigma_dest_edit = QLineEdit()
+            saved_dest = load_setting('sigma_dest_dir') or DEFAULT_TEMPLATE_SAMPLE_DEST
+            self.sigma_dest_edit.setText(saved_dest)
+            sigma_dest_layout.addWidget(self.sigma_dest_edit)
+
+            self.sigma_browse_btn = QPushButton("Browse...")
+            self.sigma_browse_btn.setObjectName("secondaryButton")
+            self.sigma_browse_btn.clicked.connect(self.browse_sigma_dest)
+            sigma_dest_layout.addWidget(self.sigma_browse_btn)
+
+            sigma_layout.addWidget(sigma_dest_group)
+
+            sigma_results_group = QGroupBox("Senders Sampled")
+            sigma_results_layout = QVBoxLayout(sigma_results_group)
+            sigma_results_layout.setContentsMargins(15, 20, 15, 15)
+
+            self.sigma_results_table = QTableWidget()
+            self.sigma_results_table.setColumnCount(3)
+            self.sigma_results_table.setHorizontalHeaderLabels(["Sender", "Files Copied", "Status"])
+            self.sigma_results_table.setColumnWidth(0, 320)
+            self.sigma_results_table.setColumnWidth(1, 100)
+            self.sigma_results_table.setColumnWidth(2, 180)
+            self.sigma_results_table.setAlternatingRowColors(True)
+            self.sigma_results_table.setSelectionBehavior(QTableWidget.SelectRows)
+            self.sigma_results_table.setEditTriggers(QTableWidget.NoEditTriggers)
+            self.sigma_results_table.setMinimumHeight(180)
+            self.sigma_results_table.verticalHeader().setVisible(False)
+            sigma_results_layout.addWidget(self.sigma_results_table)
+
+            sigma_layout.addWidget(sigma_results_group)
+
+            sigma_btn_layout = QHBoxLayout()
+            sigma_btn_layout.setSpacing(10)
+            self.sigma_pull_btn = QPushButton("Pull Samples")
+            self.sigma_pull_btn.setObjectName("primaryButton")
+            self.sigma_pull_btn.clicked.connect(self.pull_sigma_templates)
+            sigma_btn_layout.addWidget(self.sigma_pull_btn)
+            sigma_btn_layout.addStretch()
+            sigma_layout.addLayout(sigma_btn_layout)
+
+            tabs.addTab(sigma_tab, "  Template Samples  ")
+
         # Log tab
         log_tab = QWidget()
         log_layout = QVBoxLayout(log_tab)
@@ -2278,6 +2644,78 @@ class DocuShuttleWindow(QMainWindow):
         self.worker.signals.error.connect(self.on_error)
         self.worker.finished.connect(lambda: self.set_buttons_enabled(True))
         self.worker.start()
+
+    def browse_sigma_dest(self):
+        """Pick a destination directory for the Sigma template samples."""
+        current = self.sigma_dest_edit.text().strip() or DEFAULT_TEMPLATE_SAMPLE_DEST
+        chosen = QFileDialog.getExistingDirectory(self, "Select destination", current)
+        if chosen:
+            self.sigma_dest_edit.setText(chosen)
+
+    def pull_sigma_templates(self):
+        """Kick off the Sigma template-sample pull on a worker thread."""
+        start_qdate = self.sigma_start_date.date()
+        end_qdate = self.sigma_end_date.date()
+        if start_qdate > end_qdate:
+            QMessageBox.warning(self, "Invalid Range", "Start date must be on or before end date.")
+            return
+
+        dest_dir = self.sigma_dest_edit.text().strip()
+        if not dest_dir:
+            QMessageBox.warning(self, "Missing Destination", "Please choose a destination directory.")
+            return
+
+        local_tz = pytz.timezone(DEFAULT_TIMEZONE)
+        start_dt = local_tz.localize(datetime.datetime(
+            start_qdate.year(), start_qdate.month(), start_qdate.day()))
+        end_dt = local_tz.localize(datetime.datetime(
+            end_qdate.year(), end_qdate.month(), end_qdate.day(),
+            23, 59, 59))
+
+        save_setting('sigma_dest_dir', dest_dir)
+
+        mailbox_name = self.sigma_mailbox_combo.currentText()
+        folder_path = TEMPLATE_SOURCE_FOLDERS.get(mailbox_name)
+        if not folder_path:
+            QMessageBox.warning(self, "Unknown Mailbox", f"No folder path configured for '{mailbox_name}'.")
+            return
+        save_setting('sigma_mailbox', mailbox_name)
+
+        self.sigma_results_table.setRowCount(0)
+        self.sigma_pull_btn.setEnabled(False)
+        self.log(f"Pulling template samples from {mailbox_name} "
+                 f"({start_qdate.toString('MM/dd/yyyy')} "
+                 f"to {end_qdate.toString('MM/dd/yyyy')})...")
+
+        self.sigma_worker = SigmaTemplateWorker(start_dt, end_dt, folder_path, dest_dir)
+        self.sigma_worker.signals.log_message.connect(self.log)
+        self.sigma_worker.signals.sender_copied.connect(self.on_sigma_sender_copied)
+        self.sigma_worker.signals.pull_complete.connect(self.on_sigma_pull_complete)
+        self.sigma_worker.signals.error.connect(self.on_sigma_pull_error)
+        self.sigma_worker.finished.connect(lambda: self.sigma_pull_btn.setEnabled(True))
+        self.sigma_worker.start()
+
+    def on_sigma_sender_copied(self, sender, file_count):
+        """Add a row to the Sigma results table as each sender is processed."""
+        row = self.sigma_results_table.rowCount()
+        self.sigma_results_table.insertRow(row)
+        self.sigma_results_table.setItem(row, 0, QTableWidgetItem(sender))
+        self.sigma_results_table.setItem(row, 1, QTableWidgetItem(str(file_count)))
+        self.sigma_results_table.setItem(row, 2, QTableWidgetItem("Copied"))
+
+    def on_sigma_pull_complete(self, result):
+        """Show summary after the Sigma pull finishes."""
+        msg = (f"Done. {result['senders_copied']} senders copied, "
+               f"{result['senders_skipped']} skipped (already present), "
+               f"{result['attachments_copied']} files total.")
+        if result.get('errors'):
+            msg += f"\n\n{len(result['errors'])} error(s) — see Log tab."
+        QMessageBox.information(self, "Sigma Template Samples", msg)
+
+    def on_sigma_pull_error(self, error_msg):
+        """Show error from Sigma pull."""
+        self.log(f"Sigma pull error: {error_msg}")
+        QMessageBox.critical(self, "Sigma Template Samples", error_msg)
 
     def display_subject(self, subject, recipient, attachments):
         """Display forwarded email details in table."""
